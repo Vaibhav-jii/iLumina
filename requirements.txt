@@ -1,0 +1,10 @@
+fastmcp
+fastapi
+uvicorn[standard]
+httpx
+python-dotenv
+pillow
+groq
+google-genai
+duckduckgo-search
+openai

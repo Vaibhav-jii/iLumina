@@ -1,0 +1,68 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "description": "Read, write, and manage local files and directories with configurable access controls.",
+  "icons": [
+    {
+      "mimeType": "image/svg+xml",
+      "sizes": [
+        "any"
+      ],
+      "src": "https://storage.googleapis.com/pulse_public/dewey_icons/reference-server.svg"
+    }
+  ],
+  "name": "com.pulsemcp.mirror/modelcontextprotocol-filesystem",
+  "packages": [
+    {
+      "identifier": "@modelcontextprotocol/server-filesystem",
+      "packageArguments": [
+        {
+          "description": "Directory path(s) the server is allowed to access. At least one required.",
+          "format": "filepath",
+          "isRepeated": true,
+          "isRequired": true,
+          "type": "positional",
+          "valueHint": "allowed_directory"
+        }
+      ],
+      "registryType": "npm",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "version": "2026.1.14"
+    },
+    {
+      "identifier": "docker.io/mcp/filesystem:latest",
+      "packageArguments": [
+        {
+          "description": "Container path(s) to allow access (typically /projects or subdirectories).",
+          "format": "filepath",
+          "isRepeated": true,
+          "isRequired": true,
+          "type": "positional",
+          "valueHint": "container_path"
+        }
+      ],
+      "registryType": "oci",
+      "runtimeArguments": [
+        {
+          "description": "Mount host directory into container at /projects.",
+          "isRequired": true,
+          "name": "--mount",
+          "placeholder": "type=bind,src=/path/to/dir,dst=/projects",
+          "type": "named"
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ],
+  "repository": {
+    "source": "github",
+    "subfolder": "src/filesystem",
+    "url": "https://github.com/modelcontextprotocol/servers"
+  },
+  "title": "Filesystem",
+  "version": "0.0.1"
+}

@@ -16,14 +16,18 @@ import asyncio
 import base64
 import traceback
 import sqlite3
+import chromadb
 from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 from fastmcp import Client as MCPClient
+from mcp.client.stdio import stdio_client, StdioServerParameters
+from mcp.client.session import ClientSession
+from contextlib import asynccontextmanager
 
 
 # LLM Providers
@@ -50,11 +54,53 @@ NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
 DEFAULT_GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 DEFAULT_GROQ_VISION = os.getenv("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
 
+from contextlib import asynccontextmanager, AsyncExitStack
+
+# --- MCP Multi-Client Manager ---
+MCP_SESSIONS = {}
+MCP_TOOLS_CACHE = {"web": [], "documents": []}
+TOOL_TO_SESSION_MAP = {}
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with AsyncExitStack() as stack:
+        try:
+            # Start Filesystem Stdio Server
+            fs_params = StdioServerParameters(
+                command="npx",
+                args=["-y", "@modelcontextprotocol/server-filesystem", "/Users/vaibhavbansal/.gemini/antigravity/scratch/Netision_technology_LLM"]
+            )
+            fs_read, fs_write = await stack.enter_async_context(stdio_client(fs_params))
+            fs_session = await stack.enter_async_context(ClientSession(fs_read, fs_write))
+            await fs_session.initialize()
+            MCP_SESSIONS["filesystem"] = {"session": fs_session}
+            
+            # Start MS365 Stdio Server
+            ms_params = StdioServerParameters(
+                command="npx",
+                args=["-y", "@softeria/ms-365-mcp-server"]
+            )
+            ms_read, ms_write = await stack.enter_async_context(stdio_client(ms_params))
+            ms_session = await stack.enter_async_context(ClientSession(ms_read, ms_write))
+            await ms_session.initialize()
+            MCP_SESSIONS["ms365"] = {"session": ms_session}
+            
+            print("✅ MCP Background Sessions Initialized")
+        except Exception as e:
+            print(f"❌ Failed to initialize MCP Sessions: {e}")
+            
+        yield
+        
+        print("🛑 Shutting down MCP Background Sessions...")
+        # AsyncExitStack automatically cleans up when we exit the 'async with' block
+
+
 # --- FastAPI App ---
 app = FastAPI(
     title="iLumina Chatbot",
-    description="AI Chatbot with Playwright browser automation via MCP",
+    description="AI Chatbot with Playwright browser automation and Multi-MCP via stdio",
     version="1.0.0",
+    lifespan=lifespan
 )
 
 # --- LLM Clients ---
@@ -84,14 +130,31 @@ def init_db():
         conn.execute('''
             CREATE TABLE IF NOT EXISTS sessions (
                 session_id TEXT PRIMARY KEY,
-                title TEXT
+                title TEXT,
+                mode TEXT DEFAULT 'chat'
             )
         ''')
+        # Add mode column if it doesn't exist (for existing DBs)
+        try:
+            conn.execute('ALTER TABLE sessions ADD COLUMN mode TEXT DEFAULT "chat"')
+        except sqlite3.OperationalError:
+            pass
+            
         # Index for fast lookups
         conn.execute('CREATE INDEX IF NOT EXISTS idx_session_id ON messages(session_id)')
         conn.commit()
 
 init_db()
+
+# --- ChromaDB Setup for UI ---
+CHROMA_DIR = os.path.join(os.path.dirname(__file__), "data", "chroma_db")
+os.makedirs(CHROMA_DIR, exist_ok=True)
+try:
+    chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
+    doc_collection = chroma_client.get_or_create_collection(name="documents")
+except Exception as e:
+    print(f"Warning: Failed to initialize ChromaDB in UI backend: {e}")
+    doc_collection = None
 
 def load_session(session_id: str) -> list:
     """Load session from RAM cache first, fallback to SQLite."""
@@ -107,7 +170,7 @@ def load_session(session_id: str) -> list:
         CHAT_CACHE[session_id] = [dict(msg) for msg in history]
         return history
 
-def append_message(session_id: str, role: str, content: str):
+def append_message(session_id: str, role: str, content: str, mode: str = "chat"):
     """Atomically append a single message to Cache and SQLite."""
     # Update Cache
     if session_id not in CHAT_CACHE:
@@ -120,6 +183,7 @@ def append_message(session_id: str, role: str, content: str):
             'INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)',
             (session_id, role, content)
         )
+        conn.execute('INSERT OR IGNORE INTO sessions (session_id, mode) VALUES (?, ?)', (session_id, mode))
         conn.commit()
 
 
@@ -136,48 +200,113 @@ class ChatTitleUpdate(BaseModel):
 # --- Intent Detection (Removed in favor of Native LLM Tool Calling) ---
 
 # --- Tool Registry ---
-async def fetch_tools_as_openai_schema() -> list[dict]:
-    """Fetch MCP tools and convert them to OpenAI JSON Schema format for native tool calling."""
+async def fetch_tools_as_openai_schema(mode: str = "web") -> list[dict]:
+    """Fetch MCP tools and convert them to OpenAI JSON Schema format, filtered by mode."""
     tools = []
-    try:
-        async with MCPClient(FASTMCP_URL) as client:
-            mcp_tools = await client.list_tools()
-            for t in mcp_tools:
-                tools.append({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description or "",
-                        "parameters": t.inputSchema or {"type": "object", "properties": {}}
-                    }
-                })
-    except Exception as e:
-        print(f"Failed to fetch MCP tools for LLM schema: {e}")
+    global TOOL_TO_SESSION_MAP
+    
+    if mode == "web":
+        try:
+            async with MCPClient(FASTMCP_URL) as client:
+                mcp_tools = await client.list_tools()
+                for t in mcp_tools:
+                    # Filter out document tools from web mode
+                    if t.name in ["embed_document", "search_embedded_documents"]:
+                        continue
+                    
+                    TOOL_TO_SESSION_MAP[t.name] = "playwright"
+                    tools.append({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description or "",
+                            "parameters": t.inputSchema or {"type": "object", "properties": {}}
+                        }
+                    })
+        except Exception as e:
+            print(f"Failed to fetch Playwright tools: {e}")
+            
+    elif mode == "documents":
+        # 1. Fetch ChromaDB Document tools from FastMCP (hosted on 8001)
+        try:
+            async with MCPClient(FASTMCP_URL) as client:
+                mcp_tools = await client.list_tools()
+                for t in mcp_tools:
+                    if t.name in ["embed_document", "search_embedded_documents"]:
+                        TOOL_TO_SESSION_MAP[t.name] = "playwright"
+                        tools.append({
+                            "type": "function",
+                            "function": {
+                                "name": t.name,
+                                "description": t.description or "",
+                                "parameters": t.inputSchema or {"type": "object", "properties": {}}
+                            }
+                        })
+        except Exception as e:
+            print(f"Failed to fetch Document tools from FastMCP: {e}")
+
+        # 2. Fetch Stdio MCP tools (Filesystem, MS365)
+        for session_name, data in MCP_SESSIONS.items():
+            try:
+                session = data["session"]
+                result = await session.list_tools()
+                for t in result.tools:
+                    TOOL_TO_SESSION_MAP[t.name] = session_name
+                    tools.append({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description or "",
+                            "parameters": t.inputSchema or {"type": "object", "properties": {}}
+                        }
+                    })
+            except Exception as e:
+                print(f"Failed to fetch tools for {session_name}: {e}")
+                
+    # Mode "chat" explicitly gets no tools
     return tools
 
 
 # --- MCP Tool Execution ---
 async def execute_mcp_tool(tool_name: str, arguments: dict) -> str:
+    session_name = TOOL_TO_SESSION_MAP.get(tool_name, "playwright")
+    
     try:
-        async with MCPClient(FASTMCP_URL) as client:
-            result = await client.call_tool(tool_name, arguments)
-            texts = []
-            items = result.content if hasattr(result, 'content') else result
-            for item in items:
-                if hasattr(item, 'text'):
-                    texts.append(item.text)
-                elif hasattr(item, 'data'):
-                    texts.append(json.dumps({
-                        "type": "image",
-                        "mimeType": getattr(item, 'mimeType', 'image/png'),
-                        "data": item.data,
-                    }))
-                else:
-                    texts.append(str(item))
-            return "\n".join(texts)
+        if session_name == "playwright":
+            # HTTP Proxy Client
+            async with MCPClient(FASTMCP_URL) as client:
+                result = await client.call_tool(tool_name, arguments)
+                return _parse_tool_result(result)
+        else:
+            # Stdio Client
+            session = MCP_SESSIONS[session_name]["session"]
+            result = await session.call_tool(tool_name, arguments)
+            return _parse_tool_result(result)
+            
     except Exception as e:
         traceback.print_exc()
         return json.dumps({"error": str(e)})
+
+def _parse_tool_result(result) -> str:
+    texts = []
+    items = result.content if hasattr(result, 'content') else result
+    if not items:
+        return "Tool executed successfully (no output)."
+        
+    for item in items:
+        if hasattr(item, 'text'):
+            texts.append(item.text)
+        elif hasattr(item, 'data'):
+            texts.append(json.dumps({
+                "type": "image",
+                "mimeType": getattr(item, 'mimeType', 'image/png'),
+                "data": item.data,
+            }))
+        elif type(item) is dict and "text" in item:
+            texts.append(item["text"])
+        else:
+            texts.append(str(item))
+    return "\n".join(texts)
 
 
 def _extract_screenshots(result_str: str) -> list[str]:
@@ -236,12 +365,25 @@ async def call_llm(provider: str, model: str, messages: list, max_tokens=4096, t
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
-            tools=tools if tools else None
+            tools=tools if tools else None,
+            parallel_tool_calls=False
         )
         msg = response.choices[0].message
+        tool_calls = None
+        if hasattr(msg, "tool_calls") and msg.tool_calls:
+            tool_calls = []
+            for tc in msg.tool_calls:
+                tool_calls.append({
+                    "id": tc.id,
+                    "type": getattr(tc, "type", "function"),
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments
+                    }
+                })
         return {
             "content": msg.content or "",
-            "tool_calls": getattr(msg, "tool_calls", None)
+            "tool_calls": tool_calls
         }
         
     elif provider == "nvidia":
@@ -253,12 +395,25 @@ async def call_llm(provider: str, model: str, messages: list, max_tokens=4096, t
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
-            tools=tools if tools else None
+            tools=tools if tools else None,
+            parallel_tool_calls=False
         )
         msg = response.choices[0].message
+        tool_calls = None
+        if hasattr(msg, "tool_calls") and msg.tool_calls:
+            tool_calls = []
+            for tc in msg.tool_calls:
+                tool_calls.append({
+                    "id": tc.id,
+                    "type": getattr(tc, "type", "function"),
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments
+                    }
+                })
         return {
             "content": msg.content or "",
-            "tool_calls": getattr(msg, "tool_calls", None)
+            "tool_calls": tool_calls
         }
 
     elif provider == "gemini":
@@ -325,6 +480,7 @@ async def chat(
     session_id: str = Form("default"),
     provider: str = Form("groq"),
     model_name: str = Form("llama-3.3-70b-versatile"),
+    mode: str = Form("chat"),
     image: Optional[UploadFile] = File(None),
 ):
     """Process a chat message with tool calling and LLM Routing."""
@@ -340,7 +496,7 @@ async def chat(
         image_base64 = base64.b64encode(image_data).decode('utf-8')
         image_mime = image.content_type or "image/png"
 
-    append_message(session_id, "user", message)
+    append_message(session_id, "user", message, mode)
     history = load_session(session_id)
 
     screenshots = []
@@ -372,47 +528,74 @@ async def chat(
             append_message(session_id, "assistant", result_text)
             return ChatResponse(response=result_text)
 
-        # === TEXT MODE: Native LLM Tool Calling ===
+        # === TEXT MODE: Native LLM Agent Loop ===
         
         # Fetch available tools
         available_tools = await fetch_tools_as_openai_schema()
         
         # Build message history for the LLM
         chat_messages = [
-            {"role": "system", "content": "You are iLumina, a helpful AI assistant with browser automation. Use tools when necessary to fulfill the user's request. CRITICAL RULES: 1) `get_page_snapshot` returns TEXT, not an image. 2) Only `take_screenshot` and `navigate_and_summarize` return actual images. 3) NEVER say 'Here is a screenshot' unless you actually called a tool that returns an image. 4) If you only read text, just provide the summary."},
+            {"role": "system", "content": "You are iLumina, an autonomous AI agent with browser automation. You MUST use tools sequentially to complete complex tasks. CRITICAL: 1) get_page_snapshot returns TEXT, not an image. 2) Only take_screenshot returns actual images. 3) IMPORTANT FOR DOCUMENTS: When a user asks you to explain, summarize, or query a document/resume, you MUST use `list_embedded_documents` first to find the exact filename if you don't know it. Then, use `query_documents` and explicitly pass `filename_filter` to ensure you don't mix up content from different files!"},
         ]
         for m in history[-20:]:
             chat_messages.append({"role": m["role"], "content": m["content"]})
             
-        # First LLM Call: Decide to chat or use a tool
-        result = await call_llm(
-            provider,
-            model_name,
-            messages=chat_messages,
-            temperature=0.3,
-            tools=available_tools
-        )
+        MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "5"))
+        iterations = 0
+        result_text = ""
         
-        if result["tool_calls"]:
-            # Tool calling executed by LLM
+        while iterations < MAX_ITERATIONS:
+            iterations += 1
+            result = await call_llm(
+                provider,
+                model_name,
+                messages=chat_messages,
+                temperature=0.3,
+                tools=available_tools if len(available_tools) > 0 else None
+            )
+            
+            if not result.get("tool_calls"):
+                result_text = result["content"]
+                break
+                
+            # Append assistant message with tool calls
+            chat_messages.append({
+                "role": "assistant",
+                "content": result.get("content") or None,
+                "tool_calls": result["tool_calls"]
+            })
+            
+            # Execute all tools in parallel
+            tasks = []
             for tc in result["tool_calls"]:
-                tool_name = tc.function.name
+                tool_name = tc["function"]["name"]
                 try:
-                    tool_args = json.loads(tc.function.arguments)
+                    tool_args = json.loads(tc["function"]["arguments"])
                 except json.JSONDecodeError:
                     tool_args = {}
                     
                 tool_calls_made.append(tool_name)
-                print(f"🔧 LLM executed tool: {tool_name}({tool_args})")
+                print(f"🔧 Iteration {iterations}: LLM executed tool: {tool_name}({tool_args})")
                 
-                # Execute the tool
-                tool_result = await execute_mcp_tool(tool_name, tool_args)
-                screenshots.extend(_extract_screenshots(tool_result))
+                tasks.append(execute_mcp_tool(tool_name, tool_args))
+                
+            tool_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Process results and append tool messages
+            for tc, tool_result in zip(result["tool_calls"], tool_results):
+                tool_name = tc["function"]["name"]
+                tool_call_id = tc["id"]
+                
+                if isinstance(tool_result, Exception):
+                    tool_result_str = json.dumps({"error": str(tool_result)})
+                else:
+                    tool_result_str = str(tool_result)
+                    screenshots.extend(_extract_screenshots(tool_result_str))
                 
                 # Clean result for context window
-                clean_result = tool_result
+                clean_result = tool_result_str
                 try:
-                    parsed = json.loads(tool_result)
+                    parsed = json.loads(tool_result_str)
                     if isinstance(parsed, dict):
                         if "screenshot" in parsed and parsed["screenshot"]:
                             parsed["screenshot"] = "[screenshot captured]"
@@ -420,24 +603,35 @@ async def chat(
                             parsed["data"] = "[image data]"
                         clean_result = json.dumps(parsed, indent=2)
                 except (json.JSONDecodeError, TypeError):
-                    if len(clean_result) > 6000:
-                        clean_result = clean_result[:6000] + "\n... (truncated)"
+                    pass
                 
-                # Append tool results to messages and call LLM again for the final response
-                chat_messages.append({"role": "assistant", "content": f"I decided to use the {tool_name} tool to help with this."})
-                chat_messages.append({"role": "user", "content": f"The tool '{tool_name}' returned the following result:\n{clean_result}\n\nPlease provide a helpful summary or answer based on this result."})
+                # FORCE truncate to protect context window, regardless of format
+                # Bumping to 30,000 chars (~7k tokens) so the LLM can actually see link IDs at the bottom of the DOM
+                if len(clean_result) > 30000:
+                    clean_result = clean_result[:30000] + "\n... [CONTENT TRUNCATED TO SAVE CONTEXT WINDOW]"
+                        
+                chat_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": tool_name,
+                    "content": clean_result
+                })
                 
-                final_result = await call_llm(provider, model_name, messages=chat_messages, temperature=0.3)
-                result_text = final_result["content"]
-        else:
-            # No tool called, just normal chat response
-            result_text = result["content"]
+        # Handle hitting MAX_ITERATIONS cap
+        if iterations >= MAX_ITERATIONS:
+            print("⚠️ Reached max iterations cap. Asking model to summarize.")
+            chat_messages.append({
+                "role": "system",
+                "content": "You have reached the maximum number of tool execution steps. Please summarize the information you have gathered so far and provide a final answer to the user."
+            })
+            final_result = await call_llm(provider, model_name, messages=chat_messages, temperature=0.3, tools=None)
+            result_text = final_result["content"]
 
         # Inject screenshots into markdown so they persist in the DB
         for url in screenshots:
             result_text += f"\n\n![Screenshot]({url})"
 
-        append_message(session_id, "assistant", result_text)
+        append_message(session_id, "assistant", result_text, mode)
         return ChatResponse(
             response=result_text,
             screenshots=screenshots,
@@ -447,7 +641,7 @@ async def chat(
     except Exception as e:
         traceback.print_exc()
         error_msg = f"⚠️ Error: {str(e)}"
-        append_message(session_id, "assistant", error_msg)
+        append_message(session_id, "assistant", error_msg, mode)
         return ChatResponse(response=error_msg)
 
 
@@ -509,8 +703,8 @@ async def list_documents():
         return {"files": []}
 
 @app.get("/api/chats")
-async def list_chats():
-    """List all saved chat sessions directly from SQLite."""
+async def list_chats(mode: str = "chat"):
+    """List all saved chat sessions directly from SQLite filtered by mode."""
     sessions = []
     with sqlite3.connect(DB_PATH) as conn:
         # Get all unique sessions ordered by latest activity
@@ -518,9 +712,10 @@ async def list_chats():
             SELECT m.session_id, MAX(m.timestamp), s.title
             FROM messages m
             LEFT JOIN sessions s ON m.session_id = s.session_id
+            WHERE COALESCE(s.mode, 'chat') = ?
             GROUP BY m.session_id
             ORDER BY MAX(m.timestamp) DESC
-        ''')
+        ''', (mode,))
         for row in cursor.fetchall():
             sid = row[0]
             title = row[2]
@@ -542,9 +737,54 @@ async def list_chats():
     return sessions
 
 @app.get("/api/chats/{session_id}")
-async def get_chat(session_id: str):
-    """Load a specific chat session."""
-    return load_session(session_id)
+async def get_chat_history(session_id: str):
+    history = load_session(session_id)
+    return {"session_id": session_id, "messages": history}
+
+@app.get("/api/documents/tree")
+async def get_document_tree():
+    """Return a nested JSON tree of all embedded documents."""
+    if not doc_collection:
+        return {"tree": {}}
+        
+    # Get all metadata
+    result = doc_collection.get()
+    metadatas = result.get('metadatas', [])
+    
+    # We only want unique filepaths
+    unique_files = {}
+    for meta in metadatas:
+        filepath = meta.get('filepath')
+        if filepath and filepath not in unique_files:
+            unique_files[filepath] = {
+                "name": meta.get('filename'),
+                "last_modified": meta.get('last_modified')
+            }
+            
+    # Build tree
+    tree = {}
+    for filepath, details in unique_files.items():
+        parts = filepath.split('/')
+        current_node = tree
+        
+        for i, part in enumerate(parts):
+            if i == len(parts) - 1:
+                # It's the file
+                current_node[part] = {
+                    "_type": "file",
+                    "path": filepath,
+                    "details": details
+                }
+            else:
+                # It's a directory
+                if part not in current_node:
+                    current_node[part] = {
+                        "_type": "directory",
+                        "children": {}
+                    }
+                current_node = current_node[part]["children"]
+                
+    return {"tree": tree}
 
 @app.put("/api/chats/{session_id}/title")
 async def update_chat_title(session_id: str, request: ChatTitleUpdate):
@@ -588,6 +828,10 @@ frontend_dir = os.path.join(os.path.dirname(__file__), "frontend")
 if os.path.exists(frontend_dir):
     app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
 
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=204)
 
 @app.get("/")
 async def serve_frontend():

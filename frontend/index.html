@@ -16,24 +16,37 @@
 
 <body>
     <div id="app">
-        <!-- Sidebar -->
-        <aside id="sidebar" class="sidebar">
+        <!-- Primary Sidebar (Modes) -->
+        <nav id="primary-sidebar" class="primary-sidebar">
+            <div class="primary-logo" title="iLumina">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="url(#logoGrad2)" stroke-width="2" />
+                    <circle cx="12" cy="12" r="4" fill="url(#logoGrad2)" />
+                    <defs>
+                        <linearGradient id="logoGrad2" x1="2" y1="2" x2="22" y2="22">
+                            <stop stop-color="#6C5CE7" />
+                            <stop offset="1" stop-color="#A29BFE" />
+                        </linearGradient>
+                    </defs>
+                </svg>
+            </div>
+            <div class="mode-switchers">
+                <button class="mode-btn active" id="mode-chat-btn" onclick="switchMode('chat')" title="Conversational Chat">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                </button>
+                <button class="mode-btn" id="mode-web-btn" onclick="switchMode('web')" title="Web Automation (Playwright)">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                </button>
+                <button class="mode-btn" id="mode-documents-btn" onclick="switchMode('documents')" title="Documents & Knowledge (OneDrive, Local)">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                </button>
+            </div>
+        </nav>
+
+        <!-- Secondary Sidebar (Contextual) -->
+        <aside id="secondary-sidebar" class="secondary-sidebar">
             <div class="sidebar-header">
-                <div class="logo">
-                    <div class="logo-icon">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                            <circle cx="12" cy="12" r="10" stroke="url(#logoGrad)" stroke-width="2" />
-                            <circle cx="12" cy="12" r="4" fill="url(#logoGrad)" />
-                            <defs>
-                                <linearGradient id="logoGrad" x1="2" y1="2" x2="22" y2="22">
-                                    <stop stop-color="#6C5CE7" />
-                                    <stop offset="1" stop-color="#A29BFE" />
-                                </linearGradient>
-                            </defs>
-                        </svg>
-                    </div>
-                    <span class="logo-text">iLumina</span>
-                </div>
+                <span class="logo-text" id="sidebar-title">Chat</span>
             </div>
 
             <button id="new-chat-btn" class="new-chat-btn" onclick="newSession()">
@@ -43,24 +56,7 @@
                 New Chat
             </button>
 
-            <div class="sidebar-section">
-                <div class="sidebar-section-title">Status</div>
-                <div class="status-indicators">
-                    <div class="status-item" id="status-mcp">
-                        <div class="status-dot" id="mcp-dot"></div>
-                        <span>MCP Server</span>
-                    </div>
-                    <div class="status-item" id="status-groq">
-                        <div class="status-dot" id="groq-dot"></div>
-                        <span>Groq LLM</span>
-                    </div>
-                    <div class="status-item" id="status-playwright">
-                        <div class="status-dot" id="playwright-dot"></div>
-                        <span>Playwright</span>
-                    </div>
-                </div>
-            </div>
-
+            <!-- Shared Chat History for Current Mode -->
             <div class="sidebar-section">
                 <div class="sidebar-section-title">Previous Chats</div>
                 <div id="chats-list" class="tools-list">
@@ -68,24 +64,66 @@
                 </div>
             </div>
 
-            <div class="sidebar-section">
-                <details>
-                    <summary class="sidebar-section-title" style="cursor: pointer; user-select: none;">Embedded
-                        Documents 🔽</summary>
-                    <div id="docs-list" class="tools-list" style="margin-top: 10px;">
-                        <div class="tool-item loading">Loading docs...</div>
-                    </div>
-                </details>
+            <!-- Mode Sections -->
+            <div id="section-chat" class="mode-section active">
+                <!-- Chat mode has no specific tools, it just relies on the shared chat history -->
             </div>
 
-            <div class="sidebar-section">
-                <details>
-                    <summary class="sidebar-section-title" style="cursor: pointer; user-select: none;">Available Tools
-                        🔽</summary>
-                    <div id="tools-list" class="tools-list" style="margin-top: 10px;">
-                        <div class="tool-item loading">Loading tools...</div>
+            <div id="section-web" class="mode-section" style="display: none;">
+                <div class="sidebar-section">
+                    <div class="sidebar-section-title">Playwright Status</div>
+                    <div class="status-indicators">
+                        <div class="status-item" id="status-playwright">
+                            <div class="status-dot" id="playwright-dot"></div>
+                            <span>Playwright Engine</span>
+                        </div>
                     </div>
-                </details>
+                </div>
+                <div class="sidebar-section">
+                    <details open>
+                        <summary class="sidebar-section-title" style="cursor: pointer; user-select: none;">Web Tools 🔽</summary>
+                        <div id="web-tools-list" class="tools-list" style="margin-top: 10px;">
+                            <div class="tool-item loading">Loading...</div>
+                        </div>
+                    </details>
+                </div>
+            </div>
+
+            <div id="section-documents" class="mode-section" style="display: none;">
+                <div class="sidebar-section">
+                    <div class="sidebar-section-title">Knowledge Base Status</div>
+                    <div class="status-indicators">
+                        <div class="status-item">
+                            <span class="status-dot chroma-online"></span>
+                            ChromaDB Connected
+                        </div>
+                        <div class="status-item">
+                            <span class="status-dot ms-online"></span>
+                            OneDrive Connected
+                        </div>
+                    </div>
+                </div>
+                <div class="sidebar-section" style="flex: 1; overflow-y: auto;">
+                    <div class="sidebar-section-title">Synced Documents</div>
+                    <div id="document-tree-container" class="tree-container">
+                        <!-- Rendered by app.js -->
+                        <div class="tree-loading">Loading OneDrive hierarchy...</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="sidebar-section" style="margin-top: auto; border-top: 1px solid var(--border-subtle); padding-top: 12px;">
+                <div class="sidebar-section-title">Backend Status</div>
+                <div class="status-indicators">
+                    <div class="status-item" id="status-groq">
+                        <div class="status-dot" id="groq-dot"></div>
+                        <span>LLM Ready</span>
+                    </div>
+                    <div class="status-item" id="status-mcp">
+                        <div class="status-dot" id="mcp-dot"></div>
+                        <span>MCP Manager</span>
+                    </div>
+                </div>
             </div>
         </aside>
 
@@ -112,10 +150,10 @@
                                 <option value="groq|mixtral-8x7b-32768">Mixtral 8x7B (Groq)</option>
                             </optgroup>
                             <optgroup label="Google Gemini Models">
-                                <option value="gemini|gemini-2.5-flash" selected>Gemini 2.5 Flash</option>
+                                <option value="gemini|gemini-2.5-flash">Gemini 2.5 Flash</option>
                             </optgroup>
                             <optgroup label="NVIDIA API Models">
-                                <option value="nvidia|meta/llama-3.3-70b-instruct">Llama 3.3 70B (NVIDIA)</option>
+                                <option value="nvidia|meta/llama-3.3-70b-instruct" selected>Llama 3.3 70B (NVIDIA)</option>
                             </optgroup>
                         </select>
                     </div>

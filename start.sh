@@ -54,8 +54,8 @@ PYTHON=$(command -v python3 || command -v python)
 cleanup() {
     echo ""
     echo -e "${YELLOW}🛑 Shutting down all services...${NC}"
-    kill $PID_PLAYWRIGHT $PID_FASTMCP $PID_FASTAPI 2>/dev/null
-    wait $PID_PLAYWRIGHT $PID_FASTMCP $PID_FASTAPI 2>/dev/null
+    kill $PID_PLAYWRIGHT $PID_FASTMCP $PID_FASTAPI $PID_SYNC 2>/dev/null
+    wait $PID_PLAYWRIGHT $PID_FASTMCP $PID_FASTAPI $PID_SYNC 2>/dev/null
     echo -e "${GREEN}✅ All services stopped.${NC}"
 }
 trap cleanup EXIT
@@ -75,12 +75,18 @@ sleep 2
 echo -e "${GREEN}  ✅ FastMCP Proxy running (PID: $PID_FASTMCP)${NC}"
 
 # 3. Start FastAPI Backend
-# 3. Start FastAPI Backend
-echo -e "${BLUE}[3/3]${NC} Starting FastAPI Backend on port 8000..."
+echo -e "${BLUE}[3/4]${NC} Starting FastAPI Backend on port 8000..."
 $PYTHON main.py &
 PID_FASTAPI=$!
 sleep 2
 echo -e "${GREEN}  ✅ FastAPI Backend running (PID: $PID_FASTAPI)${NC}"
+
+# 4. Start OneDrive Sync Engine
+echo -e "${BLUE}[4/4]${NC} Starting OneDrive Sync Engine..."
+$PYTHON -u sync_engine.py &
+PID_SYNC=$!
+sleep 1
+echo -e "${GREEN}  ✅ OneDrive Sync Engine running (PID: $PID_SYNC)${NC}"
 
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════╗${NC}"

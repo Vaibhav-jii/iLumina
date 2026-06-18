@@ -254,60 +254,29 @@ def embed_document(file_path: str) -> str:
     except Exception as e:
         return json.dumps({"error": f"Failed to embed document: {str(e)}"})
 
-@mcp.tool
-async def embed_onedrive_document(item_id: str, filename: str) -> str:
-    """Read a document from Microsoft OneDrive by its item_id, generate embeddings, and store them persistently."""
-    if not doc_collection:
-        return json.dumps({"error": "ChromaDB not initialized. Check server logs."})
-        
-    try:
-        # Check if already embedded
-        results = doc_collection.get(where={"file_path": item_id})
-        if results and results["ids"]:
-            return json.dumps({"status": "Document already embedded."})
-            
-        # Fetch content from OneDrive
-        async with stdio_client(get_onedrive_server_params()) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool("get_file", {"item_id": item_id})
-                texts = _extract_texts(result)
-                text = "\n".join(texts)
-                
-        if not text.strip() or "File not found" in text:
-            return json.dumps({"error": "Document is empty or could not be read."})
-            
-        chunks = _chunk_text(text)
-        
-        ids = [str(uuid.uuid4()) for _ in chunks]
-        metadatas = [{"file_path": item_id, "filename": filename, "source": "onedrive"} for _ in chunks]
-        
-        doc_collection.add(
-            documents=chunks,
-            metadatas=metadatas,
-            ids=ids
-        )
-        
-        return json.dumps({"status": f"Successfully embedded {len(chunks)} chunks from OneDrive: {filename}."})
-    except Exception as e:
-        return json.dumps({"error": f"Failed to embed OneDrive document: {str(e)}"})
+
 
 @mcp.tool
-def query_documents(query: str, n_results: int = 3) -> str:
+def query_documents(query: str, n_results: int = 5, filename_filter: str = None) -> str:
     """Search through all previously embedded documents for text relevant to the query.
     
     Args:
         query: The search text or question.
-        n_results: Number of relevant chunks to return (default 3).
+        n_results: Number of relevant chunks to return (default 5).
+        filename_filter: If provided, restricts the search to a specific filename (exact match) to avoid mixing up different documents.
     """
     if not doc_collection:
         return json.dumps({"error": "ChromaDB not initialized."})
         
     try:
-        results = doc_collection.query(
-            query_texts=[query],
-            n_results=n_results
-        )
+        kwargs = {
+            "query_texts": [query],
+            "n_results": n_results
+        }
+        if filename_filter:
+            kwargs["where"] = {"filename": filename_filter}
+            
+        results = doc_collection.query(**kwargs)
         
         if not results or not results["documents"] or not results["documents"][0]:
             return json.dumps({"status": "No relevant documents found."})
@@ -422,50 +391,7 @@ async def list_local_directory(path: str) -> str:
     except Exception as e:
         return json.dumps({"error": f"Directory list failed: {str(e)}"})
 
-# --- OneDrive MCP Tools ---
-def get_onedrive_server_params() -> StdioServerParameters:
-    onedrive_dir = os.path.join(os.path.dirname(__file__), "onedrive_mcp")
-    index_js = os.path.join(onedrive_dir, "dist", "index.js")
-    return StdioServerParameters(command="node", args=[index_js], env=os.environ.copy())
 
-@mcp.tool
-async def onedrive_list_files(folder_path: str = "root") -> str:
-    """List files and folders in a specific Microsoft OneDrive path. (Default is 'root')"""
-    try:
-        async with stdio_client(get_onedrive_server_params()) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool("list_files", {"path": folder_path})
-                texts = _extract_texts(result)
-                return "\n".join(texts) if texts else "Folder empty."
-    except Exception as e:
-        return json.dumps({"error": f"OneDrive list failed: {str(e)}"})
-
-@mcp.tool
-async def onedrive_search_files(query: str) -> str:
-    """Search for files in Microsoft OneDrive by name or content."""
-    try:
-        async with stdio_client(get_onedrive_server_params()) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool("search_files", {"query": query})
-                texts = _extract_texts(result)
-                return "\n".join(texts) if texts else "No files found."
-    except Exception as e:
-        return json.dumps({"error": f"OneDrive search failed: {str(e)}"})
-        
-@mcp.tool
-async def onedrive_read_file(item_id: str) -> str:
-    """Read details or content of a Microsoft OneDrive file by its item_id."""
-    try:
-        async with stdio_client(get_onedrive_server_params()) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool("get_file", {"item_id": item_id})
-                texts = _extract_texts(result)
-                return "\n".join(texts) if texts else "File empty."
-    except Exception as e:
-        return json.dumps({"error": f"OneDrive read failed: {str(e)}"})
 # --- Run the server ---
 if __name__ == "__main__":
     port = int(os.getenv("FASTMCP_PORT", "8001"))

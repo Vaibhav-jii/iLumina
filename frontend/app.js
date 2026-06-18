@@ -9,6 +9,7 @@
 let sessionId = crypto.randomUUID();
 let isProcessing = false;
 let pendingImage = null; // { file: File, preview: dataURL }
+let currentMode = 'chat'; // 'chat', 'web', 'documents'
 
 // Voice state
 let isRecording = false;
@@ -35,7 +36,6 @@ document.addEventListener('DOMContentLoaded', () => {
     checkHealth();
     loadTools();
     loadChats();
-    loadDocs();
     inputEl.addEventListener('input', updateSendButton);
 
     // Drag & drop support
@@ -70,6 +70,47 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 });
+
+// --- Mode Switching ---
+function switchMode(mode) {
+    currentMode = mode;
+    
+    // Update active state on primary sidebar buttons
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    document.getElementById(`mode-${mode}-btn`).classList.add('active');
+    
+    // Update active section in secondary sidebar
+    document.querySelectorAll('.mode-section').forEach(sec => {
+        sec.classList.remove('active');
+        sec.style.display = 'none';
+    });
+    const activeSection = document.getElementById(`section-${mode}`);
+    if (activeSection) {
+        activeSection.classList.add('active');
+        activeSection.style.display = 'flex';
+    }
+    
+    // Update sidebar title
+    const titles = {
+        'chat': 'Chat History',
+        'web': 'Web Engine',
+        'documents': 'Knowledge Base'
+    };
+    document.getElementById('sidebar-title').innerText = titles[mode];
+    
+    // Auto-focus input
+    inputEl.focus();
+    
+    // Reload chat history for the new mode
+    loadChats();
+    
+    // If documents mode, load the tree
+    if (mode === 'documents') {
+        fetchDocumentTree();
+    }
+}
 
 // --- Image Handling ---
 function triggerImageUpload() {
@@ -167,7 +208,7 @@ async function loadTools() {
 // --- Sidebar Loaders ---
 async function loadChats() {
     try {
-        const res = await fetch('/api/chats', { cache: 'no-store' });
+        const res = await fetch(`/api/chats?mode=${currentMode}`, { cache: 'no-store' });
         const chats = await res.json();
         const chatsList = document.getElementById('chats-list');
         
@@ -196,6 +237,94 @@ async function loadChats() {
     } catch (e) {
         document.getElementById('chats-list').innerHTML = '<div class="tool-item loading">Error loading</div>';
     }
+}
+
+async function fetchDocumentTree() {
+    const container = document.getElementById('document-tree-container');
+    if (!container) return;
+    
+    container.innerHTML = '<div class="tree-loading">Loading OneDrive hierarchy...</div>';
+    
+    try {
+        const res = await fetch('/api/documents/tree');
+        const data = await res.json();
+        
+        if (data.tree && Object.keys(data.tree).length > 0) {
+            container.innerHTML = renderTreeHtml(data.tree);
+            
+            // Add click handlers for folders
+            container.querySelectorAll('.tree-folder-header').forEach(header => {
+                header.addEventListener('click', (e) => {
+                    const childrenContainer = e.currentTarget.nextElementSibling;
+                    const icon = e.currentTarget.querySelector('.folder-icon');
+                    if (childrenContainer.style.display === 'none') {
+                        childrenContainer.style.display = 'block';
+                        icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><polyline points="12 11 12 17"></polyline><polyline points="9 14 15 14"></polyline></svg>'; // Open folder icon
+                    } else {
+                        childrenContainer.style.display = 'none';
+                        icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>'; // Closed folder icon
+                    }
+                });
+            });
+        } else {
+            container.innerHTML = '<div class="tree-loading" style="color: #666;">No documents synced yet.</div>';
+        }
+    } catch (e) {
+        container.innerHTML = '<div class="tree-loading" style="color: #ff5555;">Error loading tree</div>';
+        console.error(e);
+    }
+}
+
+function renderTreeHtml(treeNode) {
+    let html = '<ul class="tree-list">';
+    
+    // Sort keys: directories first, then files
+    const keys = Object.keys(treeNode).sort((a, b) => {
+        const nodeA = treeNode[a];
+        const nodeB = treeNode[b];
+        if (nodeA._type === 'directory' && nodeB._type !== 'directory') return -1;
+        if (nodeA._type !== 'directory' && nodeB._type === 'directory') return 1;
+        return a.localeCompare(b);
+    });
+    
+    for (const key of keys) {
+        const node = treeNode[key];
+        
+        if (node._type === 'directory') {
+            html += `
+                <li class="tree-item tree-folder">
+                    <div class="tree-folder-header">
+                        <span class="folder-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                        </span>
+                        <span class="tree-label">${escapeHtml(key)}</span>
+                    </div>
+                    <div class="tree-children" style="display: block;">
+                        ${renderTreeHtml(node.children)}
+                    </div>
+                </li>
+            `;
+        } else if (node._type === 'file') {
+            const ext = key.split('.').pop().toLowerCase();
+            let icon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>';
+            
+            if (ext === 'pdf') {
+                icon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ff5555" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M16 13H8"></path><path d="M16 17H8"></path><path d="M10 9H8"></path></svg>';
+            } else if (ext === 'doc' || ext === 'docx') {
+                icon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3296ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M16 13H8"></path><path d="M16 17H8"></path><path d="M10 9H8"></path></svg>';
+            }
+            
+            html += `
+                <li class="tree-item tree-file" title="Path: ${escapeHtml(node.path)}\nLast Modified: ${node.details.last_modified}">
+                    <span class="file-icon">${icon}</span>
+                    <span class="tree-label">${escapeHtml(node.details.name)}</span>
+                </li>
+            `;
+        }
+    }
+    
+    html += '</ul>';
+    return html;
 }
 
 async function editSessionName(id, currentName, event) {
@@ -240,63 +369,13 @@ async function deleteSession(id, event) {
     }
 }
 
-async function loadDocs() {
-    try {
-        const res = await fetch('/api/documents', { cache: 'no-store' });
-        const data = await res.json();
-        const docsList = document.getElementById('docs-list');
-        
-        if (data.files && data.files.length > 0) {
-            const localDocs = data.files.filter(f => f.source === 'local' || typeof f === 'string');
-            const oneDriveDocs = data.files.filter(f => f.source === 'onedrive');
-            
-            let html = '';
-            
-            if (localDocs.length > 0) {
-                html += `
-                <details open style="margin-bottom: 8px;">
-                    <summary style="cursor: pointer; font-size: 0.9em; opacity: 0.8; margin-left: 5px;">📁 Local Files (${localDocs.length})</summary>
-                    <div style="margin-top: 5px; margin-left: 10px;">
-                        ${localDocs.map(f => `
-                            <div class="tool-item" style="padding: 5px 10px;">
-                                <div class="tool-desc" style="display:flex; align-items:center; gap:5px; width: 100%;">
-                                    <span>📄</span> <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(f.name || f)}">${escapeHtml(f.name || f)}</span>
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
-                </details>`;
-            }
-            
-            if (oneDriveDocs.length > 0) {
-                html += `
-                <details open style="margin-bottom: 8px;">
-                    <summary style="cursor: pointer; font-size: 0.9em; opacity: 0.8; margin-left: 5px; color: #0078d4;">☁️ OneDrive (${oneDriveDocs.length})</summary>
-                    <div style="margin-top: 5px; margin-left: 10px;">
-                        ${oneDriveDocs.map(f => `
-                            <div class="tool-item" style="padding: 5px 10px; border-left: 2px solid #0078d4;">
-                                <div class="tool-desc" style="display:flex; align-items:center; gap:5px; width: 100%;">
-                                    <span>📄</span> <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(f.name || f)}">${escapeHtml(f.name || f)}</span>
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
-                </details>`;
-            }
-            
-            docsList.innerHTML = html;
-        } else {
-            docsList.innerHTML = '<div class="tool-item loading">No documents embedded</div>';
-        }
-    } catch (e) {
-        document.getElementById('docs-list').innerHTML = '<div class="tool-item loading">Error loading</div>';
-    }
-}
+
 
 async function loadSession(sid) {
     try {
         const res = await fetch(`/api/chats/${sid}`);
-        const history = await res.json();
+        const data = await res.json();
+        const history = data.messages || [];
         
         if (history && history.length > 0) {
             sessionId = sid;
@@ -363,6 +442,7 @@ async function sendMessage() {
     const formData = new FormData();
     formData.append('message', text || 'Analyze this image');
     formData.append('session_id', sessionId);
+    formData.append('mode', currentMode);
     
     const selector = document.getElementById('model-selector');
     if (selector) {
@@ -463,12 +543,23 @@ function addMessage(role, content, screenshots = [], userImage = null) {
     // Add screenshots
     if (screenshots && screenshots.length > 0) {
         screenshots.forEach(ss => {
-            if (ss && ss.data) {
+            if (ss) {
                 const container = document.createElement('div');
                 container.className = 'screenshot-container';
 
                 const img = document.createElement('img');
-                img.src = `data:${ss.mimeType || 'image/png'};base64,${ss.data}`;
+                
+                // If ss is an object with base64 data (legacy)
+                if (typeof ss === 'object' && ss.data) {
+                    img.src = `data:${ss.mimeType || 'image/png'};base64,${ss.data}`;
+                } 
+                // If ss is a URL string (current backend)
+                else if (typeof ss === 'string') {
+                    img.src = ss;
+                } else {
+                    return; // Invalid format
+                }
+                
                 img.alt = 'Browser Screenshot';
                 img.loading = 'lazy';
                 img.onclick = (e) => {
@@ -586,8 +677,16 @@ document.addEventListener('keydown', (e) => {
 
 // --- Sidebar ---
 function toggleSidebar() {
-    const sidebar = document.getElementById('sidebar');
-    sidebar.classList.toggle('visible');
+    const secondarySidebar = document.getElementById('secondary-sidebar');
+    const primarySidebar = document.getElementById('primary-sidebar');
+    
+    // For desktop toggle
+    secondarySidebar.classList.toggle('collapsed');
+    primarySidebar.classList.toggle('collapsed');
+    
+    // For mobile toggle
+    secondarySidebar.classList.toggle('visible');
+    primarySidebar.classList.toggle('visible');
 }
 
 // --- Utilities ---

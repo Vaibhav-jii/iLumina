@@ -187,6 +187,22 @@
                                 stroke-linejoin="round" />
                         </svg>
                     </button>
+                    <!-- Voice Input (STT) -->
+                    <button id="voice-btn" class="voice-btn" onclick="toggleVoiceInput()" title="Hold to speak">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                            <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M19 10v2a7 7 0 01-14 0v-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                            <line x1="12" y1="19" x2="12" y2="23" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                            <line x1="8" y1="23" x2="16" y2="23" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                        </svg>
+                    </button>
+                    <!-- TTS Toggle -->
+                    <button id="tts-btn" class="tts-btn" onclick="toggleTTS()" title="Toggle voice responses">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                            <path id="tts-waves" d="M15.54 8.46a5 5 0 010 7.07M19.07 4.93a10 10 0 010 14.14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </button>
                     <textarea id="message-input"
                         placeholder="Ask me anything, paste an image, or drag & drop a screenshot..." rows="1"
                         onkeydown="handleKeyDown(event)" oninput="autoResize(this)"></textarea>
@@ -197,8 +213,18 @@
                         </svg>
                     </button>
                 </div>
+                <!-- Voice listening indicator -->
+                <div id="voice-indicator" class="voice-indicator">
+                    <div class="bars">
+                        <div class="bar"></div>
+                        <div class="bar"></div>
+                        <div class="bar"></div>
+                        <div class="bar"></div>
+                    </div>
+                    <span id="voice-status">Listening...</span>
+                </div>
                 <div class="input-footer">
-                    <span>Powered by Groq &bull; Playwright MCP &bull; 📎 Paste or drag images</span>
+                    <span>Powered by Groq &bull; Playwright MCP &bull; 🎙️ Voice &bull; 📎 Paste or drag images</span>
                 </div>
             </div>
         </main>

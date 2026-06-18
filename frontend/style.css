@@ -772,6 +772,97 @@ body {
     cursor: not-allowed;
 }
 
+/* --- Voice Button (STT) --- */
+.voice-btn,
+.tts-btn {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    border-radius: 50%;
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast);
+}
+
+.voice-btn:hover,
+.tts-btn:hover {
+    color: var(--text-primary);
+    border-color: var(--border-active);
+    background: var(--bg-tertiary);
+}
+
+.voice-btn.recording {
+    color: #FF6B6B;
+    border-color: #FF6B6B;
+    background: rgba(255, 107, 107, 0.1);
+    animation: pulse-record 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-record {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.4); }
+    50% { box-shadow: 0 0 0 10px rgba(255, 107, 107, 0); }
+}
+
+.tts-btn.active {
+    color: var(--success);
+    border-color: var(--success);
+    background: rgba(0, 210, 160, 0.1);
+}
+
+/* Voice listening indicator */
+.voice-indicator {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    background: rgba(255, 107, 107, 0.1);
+    border: 1px solid rgba(255, 107, 107, 0.3);
+    border-radius: var(--radius-md);
+    color: #FF6B6B;
+    font-size: 12px;
+    font-weight: 500;
+    animation: fadeIn 0.2s ease;
+}
+
+.voice-indicator.active {
+    display: flex;
+}
+
+.voice-indicator .bars {
+    display: flex;
+    gap: 2px;
+    align-items: center;
+    height: 16px;
+}
+
+.voice-indicator .bar {
+    width: 3px;
+    background: #FF6B6B;
+    border-radius: 2px;
+    animation: bar-bounce 0.8s ease-in-out infinite;
+}
+
+.voice-indicator .bar:nth-child(1) { height: 6px; animation-delay: 0s; }
+.voice-indicator .bar:nth-child(2) { height: 12px; animation-delay: 0.15s; }
+.voice-indicator .bar:nth-child(3) { height: 8px; animation-delay: 0.3s; }
+.voice-indicator .bar:nth-child(4) { height: 14px; animation-delay: 0.45s; }
+
+@keyframes bar-bounce {
+    0%, 100% { transform: scaleY(0.5); }
+    50% { transform: scaleY(1.2); }
+}
+
+/* TTS speaking indicator on messages */
+.message-bubble.speaking {
+    outline: 2px solid var(--success);
+    outline-offset: 2px;
+}
+
 .input-footer {
     max-width: 820px;
     margin: 8px auto 0;

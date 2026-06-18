@@ -10,6 +10,12 @@ let sessionId = crypto.randomUUID();
 let isProcessing = false;
 let pendingImage = null; // { file: File, preview: dataURL }
 
+// Voice state
+let isRecording = false;
+let recognition = null;
+let ttsEnabled = false;
+let currentUtterance = null;
+
 // --- DOM References ---
 const messagesEl = document.getElementById('messages');
 const chatContainer = document.getElementById('chat-container');
@@ -480,6 +486,11 @@ function addMessage(role, content, screenshots = [], userImage = null) {
     msgDiv.appendChild(contentDiv);
     messagesEl.appendChild(msgDiv);
 
+    // Auto-speak assistant responses if TTS is enabled
+    if (role === 'assistant' && ttsEnabled) {
+        speakText(content, bubble);
+    }
+
     scrollToBottom();
 }
 
@@ -625,4 +636,198 @@ function createWelcomeScreen() {
         </div>
     `;
     return div;
+}
+
+// ============================================
+//  VOICE-TO-VOICE (Browser Web Speech API)
+// ============================================
+
+/**
+ * Initialize the SpeechRecognition instance.
+ * Only created once, reused for all voice interactions.
+ */
+function initSpeechRecognition() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+        alert('Your browser does not support Speech Recognition. Please use Chrome or Edge.');
+        return null;
+    }
+
+    const rec = new SpeechRecognition();
+    rec.continuous = false;       // Stop after one sentence
+    rec.interimResults = true;    // Show partial results while speaking
+    rec.lang = 'en-US';
+    rec.maxAlternatives = 1;
+
+    rec.onstart = () => {
+        isRecording = true;
+        document.getElementById('voice-btn').classList.add('recording');
+        document.getElementById('voice-indicator').classList.add('active');
+        document.getElementById('voice-status').textContent = 'Listening...';
+    };
+
+    rec.onresult = (event) => {
+        let transcript = '';
+        let isFinal = false;
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+            transcript += event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+                isFinal = true;
+            }
+        }
+
+        // Show partial transcript in the input box
+        inputEl.value = transcript;
+        autoResize(inputEl);
+        updateSendButton();
+
+        if (isFinal) {
+            document.getElementById('voice-status').textContent = 'Got it!';
+            // Auto-send after a short delay
+            setTimeout(() => {
+                if (inputEl.value.trim()) {
+                    sendMessage();
+                }
+            }, 400);
+        }
+    };
+
+    rec.onerror = (event) => {
+        console.error('Speech recognition error:', event.error);
+        if (event.error === 'not-allowed') {
+            alert('Microphone access denied. Please allow microphone access in your browser settings.');
+        }
+        stopRecording();
+    };
+
+    rec.onend = () => {
+        stopRecording();
+    };
+
+    return rec;
+}
+
+function stopRecording() {
+    isRecording = false;
+    document.getElementById('voice-btn').classList.remove('recording');
+    document.getElementById('voice-indicator').classList.remove('active');
+}
+
+/**
+ * Toggle voice recording on/off.
+ */
+function toggleVoiceInput() {
+    if (isRecording) {
+        // Stop
+        if (recognition) recognition.stop();
+        stopRecording();
+        return;
+    }
+
+    // Stop any ongoing TTS
+    if (window.speechSynthesis.speaking) {
+        window.speechSynthesis.cancel();
+    }
+
+    // Start recording
+    if (!recognition) {
+        recognition = initSpeechRecognition();
+    }
+    if (recognition) {
+        try {
+            recognition.start();
+        } catch (e) {
+            // Already started, stop and restart
+            recognition.stop();
+            setTimeout(() => recognition.start(), 200);
+        }
+    }
+}
+
+/**
+ * Toggle TTS (text-to-speech) on/off for assistant responses.
+ */
+function toggleTTS() {
+    ttsEnabled = !ttsEnabled;
+    const btn = document.getElementById('tts-btn');
+    btn.classList.toggle('active', ttsEnabled);
+    btn.title = ttsEnabled ? 'Voice responses ON (click to mute)' : 'Voice responses OFF (click to enable)';
+
+    // If turning off, stop any current speech
+    if (!ttsEnabled && window.speechSynthesis.speaking) {
+        window.speechSynthesis.cancel();
+    }
+}
+
+/**
+ * Speak the given text using the browser's SpeechSynthesis API.
+ * Strips markdown formatting before speaking.
+ */
+function speakText(text, bubbleEl = null) {
+    if (!ttsEnabled || !text) return;
+
+    // Cancel any ongoing speech
+    window.speechSynthesis.cancel();
+
+    const cleanText = stripMarkdown(text);
+    
+    // Split long text into chunks (browsers have a ~5000 char limit)
+    const maxLen = 4000;
+    const chunks = [];
+    for (let i = 0; i < cleanText.length; i += maxLen) {
+        chunks.push(cleanText.substring(i, i + maxLen));
+    }
+
+    // Highlight the bubble while speaking
+    if (bubbleEl) bubbleEl.classList.add('speaking');
+
+    chunks.forEach((chunk, idx) => {
+        const utterance = new SpeechSynthesisUtterance(chunk);
+        utterance.rate = 1.05;   // Slightly faster for natural feel
+        utterance.pitch = 1.0;
+        utterance.volume = 1.0;
+        utterance.lang = 'en-US';
+
+        // Pick a good voice if available
+        const voices = window.speechSynthesis.getVoices();
+        const preferred = voices.find(v => 
+            v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('Daniel')
+        );
+        if (preferred) utterance.voice = preferred;
+
+        if (idx === chunks.length - 1) {
+            utterance.onend = () => {
+                if (bubbleEl) bubbleEl.classList.remove('speaking');
+            };
+        }
+
+        window.speechSynthesis.speak(utterance);
+    });
+}
+
+/**
+ * Strip markdown formatting to produce clean speakable text.
+ */
+function stripMarkdown(md) {
+    return md
+        .replace(/!\[.*?\]\(.*?\)/g, '')           // Remove images
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')   // Links → text
+        .replace(/#{1,6}\s+/g, '')                   // Headings
+        .replace(/(\*{1,3}|_{1,3})(.*?)\1/g, '$2') // Bold/Italic
+        .replace(/`{1,3}[^`]*`{1,3}/g, '')          // Inline/block code
+        .replace(/^\s*[-*+]\s+/gm, '')              // List markers
+        .replace(/^\s*\d+\.\s+/gm, '')              // Numbered lists
+        .replace(/^\s*>\s+/gm, '')                  // Blockquotes
+        .replace(/---+/g, '')                        // Horizontal rules
+        .replace(/\n{2,}/g, '. ')                    // Paragraph breaks → pause
+        .replace(/\n/g, ' ')                         // Newlines → space
+        .replace(/\s{2,}/g, ' ')                     // Collapse spaces
+        .trim();
+}
+
+// Pre-load voices (some browsers need this)
+if (window.speechSynthesis) {
+    window.speechSynthesis.getVoices();
+    window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
 }

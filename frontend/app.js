@@ -240,37 +240,45 @@ async function loadChats() {
 }
 
 async function fetchDocumentTree() {
-    const container = document.getElementById('document-tree-container');
-    if (!container) return;
-    
-    container.innerHTML = '<div class="tree-loading">Loading OneDrive hierarchy...</div>';
+    const containers = {
+        onedrive: document.getElementById('onedrive-tree-container'),
+        gdrive: document.getElementById('gdrive-tree-container'),
+        local: document.getElementById('local-tree-container')
+    };
     
     try {
         const res = await fetch('/api/documents/tree');
-        const data = await res.json();
+        const data = await res.json(); // returns { onedrive: {}, gdrive: {}, local: {} }
         
-        if (data.tree && Object.keys(data.tree).length > 0) {
-            container.innerHTML = renderTreeHtml(data.tree);
-            
-            // Add click handlers for folders
-            container.querySelectorAll('.tree-folder-header').forEach(header => {
-                header.addEventListener('click', (e) => {
-                    const childrenContainer = e.currentTarget.nextElementSibling;
-                    const icon = e.currentTarget.querySelector('.folder-icon');
-                    if (childrenContainer.style.display === 'none') {
-                        childrenContainer.style.display = 'block';
-                        icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><polyline points="12 11 12 17"></polyline><polyline points="9 14 15 14"></polyline></svg>'; // Open folder icon
-                    } else {
-                        childrenContainer.style.display = 'none';
-                        icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>'; // Closed folder icon
-                    }
+        for (const [source, tree] of Object.entries(data)) {
+            const container = containers[source];
+            if (!container) continue;
+
+            if (Object.keys(tree).length > 0) {
+                container.innerHTML = renderTreeHtml(tree);
+                
+                // Add click handlers for folders
+                container.querySelectorAll('.tree-folder-header').forEach(header => {
+                    header.addEventListener('click', (e) => {
+                        const childrenContainer = e.currentTarget.nextElementSibling;
+                        const icon = e.currentTarget.querySelector('.folder-icon');
+                        if (childrenContainer.style.display === 'none') {
+                            childrenContainer.style.display = 'block';
+                            icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><polyline points="12 11 12 17"></polyline><polyline points="9 14 15 14"></polyline></svg>';
+                        } else {
+                            childrenContainer.style.display = 'none';
+                            icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>';
+                        }
+                    });
                 });
-            });
-        } else {
-            container.innerHTML = '<div class="tree-loading" style="color: #666;">No documents synced yet.</div>';
+            } else {
+                container.innerHTML = '<div class="tree-loading" style="color: #666;">No documents synced yet.</div>';
+            }
         }
     } catch (e) {
-        container.innerHTML = '<div class="tree-loading" style="color: #ff5555;">Error loading tree</div>';
+        Object.values(containers).forEach(container => {
+            if(container) container.innerHTML = '<div class="tree-loading" style="color: #ff5555;">Error loading tree</div>';
+        });
         console.error(e);
     }
 }
@@ -493,10 +501,13 @@ async function sendMessage() {
 
         // Refresh sidebar after successful message
         loadChats();
-        loadDocs();
+        if (currentMode === 'documents') {
+            fetchDocumentTree();
+        }
 
     } catch (e) {
         thinkingEl.remove();
+        console.error("Chat Error:", e);
         addMessage('assistant', `⚠️ **Connection error:** Could not reach the server. Make sure all services are running.`);
     } finally {
         isProcessing = false;
@@ -540,38 +551,19 @@ function addMessage(role, content, screenshots = [], userImage = null) {
 
     contentDiv.appendChild(bubble);
 
-    // Add screenshots
-    if (screenshots && screenshots.length > 0) {
-        screenshots.forEach(ss => {
-            if (ss) {
-                const container = document.createElement('div');
-                container.className = 'screenshot-container';
-
-                const img = document.createElement('img');
-                
-                // If ss is an object with base64 data (legacy)
-                if (typeof ss === 'object' && ss.data) {
-                    img.src = `data:${ss.mimeType || 'image/png'};base64,${ss.data}`;
-                } 
-                // If ss is a URL string (current backend)
-                else if (typeof ss === 'string') {
-                    img.src = ss;
-                } else {
-                    return; // Invalid format
-                }
-                
-                img.alt = 'Browser Screenshot';
-                img.loading = 'lazy';
-                img.onclick = (e) => {
-                    e.stopPropagation();
-                    openLightbox(img.src);
-                };
-
-                container.appendChild(img);
-                contentDiv.appendChild(container);
-            }
-        });
-    }
+    // Attach lightbox to any markdown images
+    const markdownImages = bubble.querySelectorAll('img');
+    markdownImages.forEach(img => {
+        // Add styling classes if needed or just the click handler
+        img.style.maxWidth = '100%';
+        img.style.borderRadius = '8px';
+        img.style.marginTop = '8px';
+        img.style.cursor = 'pointer';
+        img.onclick = (e) => {
+            e.stopPropagation();
+            openLightbox(img.src);
+        };
+    });
 
     msgDiv.appendChild(avatar);
     msgDiv.appendChild(contentDiv);

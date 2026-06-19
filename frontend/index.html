@@ -105,9 +105,32 @@
                 </div>
                 <div class="sidebar-section" style="flex: 1; overflow-y: auto;">
                     <div class="sidebar-section-title">Synced Documents</div>
-                    <div id="document-tree-container" class="tree-container">
-                        <!-- Rendered by app.js -->
-                        <div class="tree-loading">Loading OneDrive hierarchy...</div>
+                    
+                    <div class="document-source-accordion" style="margin-bottom: 8px;">
+                        <div class="accordion-header" style="cursor: pointer; padding: 5px 0; font-weight: 500; display: flex; align-items: center; gap: 6px;" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
+                            <span>☁️</span> OneDrive
+                        </div>
+                        <div id="onedrive-tree-container" class="tree-container" style="display: block; margin-left: 10px; padding-left: 5px; border-left: 1px solid var(--border-subtle);">
+                            <div class="tree-loading">Loading OneDrive hierarchy...</div>
+                        </div>
+                    </div>
+
+                    <div class="document-source-accordion" style="margin-bottom: 8px;">
+                        <div class="accordion-header" style="cursor: pointer; padding: 5px 0; font-weight: 500; display: flex; align-items: center; gap: 6px;" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
+                            <span>📊</span> Google Drive
+                        </div>
+                        <div id="gdrive-tree-container" class="tree-container" style="display: block; margin-left: 10px; padding-left: 5px; border-left: 1px solid var(--border-subtle);">
+                            <div class="tree-loading">Loading Google Drive hierarchy...</div>
+                        </div>
+                    </div>
+
+                    <div class="document-source-accordion" style="margin-bottom: 8px;">
+                        <div class="accordion-header" style="cursor: pointer; padding: 5px 0; font-weight: 500; display: flex; align-items: center; gap: 6px;" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
+                            <span>💻</span> Local Files
+                        </div>
+                        <div id="local-tree-container" class="tree-container" style="display: block; margin-left: 10px; padding-left: 5px; border-left: 1px solid var(--border-subtle);">
+                            <div class="tree-loading">Loading Local hierarchy...</div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -139,7 +162,7 @@
                 </button>
                 <div class="header-info">
                     <h1>iLumina Chat</h1>
-                    <span class="header-subtitle">Browser automation with AI</span>
+                    <span class="header-subtitle">Multi-Cloud AI Assistant</span>
                 </div>
                 <div class="header-actions">
                     <div class="model-selector-wrapper">
@@ -157,7 +180,6 @@
                             </optgroup>
                         </select>
                     </div>
-                    <span class="badge">Playwright MCP</span>
                 </div>
             </header>
 

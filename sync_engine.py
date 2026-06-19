@@ -13,6 +13,10 @@ from fastmcp import Client as MCPClient
 from mcp.client.stdio import stdio_client, StdioServerParameters
 from mcp.client.session import ClientSession
 
+from googleapiclient.discovery import build
+from google.oauth2.credentials import Credentials
+from googleapiclient.http import MediaIoBaseDownload
+
 try:
     import PyPDF2
 except ImportError:
@@ -128,7 +132,7 @@ async def process_file(session: ClientSession, drive_id: str, item: dict, full_p
         # Chunk & Embed
         chunks = chunk_text(text)
         ids = [f"{item_id}_chunk_{i}" for i in range(len(chunks))]
-        metadatas = [{"item_id": item_id, "filename": name, "filepath": full_path, "last_modified": last_modified, "chunk_index": i} for i in range(len(chunks))]
+        metadatas = [{"source": "onedrive", "item_id": item_id, "filename": name, "filepath": full_path, "last_modified": last_modified, "chunk_index": i} for i in range(len(chunks))]
         
         doc_collection.add(
             documents=chunks,
@@ -188,6 +192,97 @@ async def run_sync_engine():
         print("--- Sync Cycle Complete. Sleeping for 5 minutes ---")
         await asyncio.sleep(300)
 
+async def process_gdrive_file(service, item):
+    item_id = item.get('id')
+    name = item.get('name')
+    last_modified = item.get('modifiedTime', "")
+    mime_type = item.get('mimeType', "")
+    
+    # Check if we already processed this exact version
+    existing = doc_collection.get(where={"item_id": item_id})
+    if existing and existing.get('metadatas'):
+        old_meta = existing['metadatas'][0]
+        if old_meta.get('last_modified') == last_modified:
+            return # Already up to date
+            
+        doc_collection.delete(where={"item_id": item_id})
+        
+    print(f"Downloading and embedding GDrive file: {name}")
+    try:
+        # Export Google Docs as plain text, download other files directly
+        if "vnd.google-apps" in mime_type:
+            if mime_type == "application/vnd.google-apps.document":
+                request = service.files().export_media(fileId=item_id, mimeType='text/plain')
+            else:
+                return # Skip other Google-native formats for now
+        else:
+            request = service.files().get_media(fileId=item_id)
+            
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while done is False:
+            status, done = downloader.next_chunk()
+        
+        content_bytes = fh.getvalue()
+        
+        # Parse text
+        temp_name = name
+        if "vnd.google-apps.document" in mime_type:
+            temp_name += ".txt"
+        elif mime_type == "application/pdf" and not name.lower().endswith(".pdf"):
+            temp_name += ".pdf"
+            
+        text = await extract_text_from_bytes(content_bytes, temp_name)
+        if not text.strip():
+            print(f"No text extracted from {name}")
+            return
+            
+        chunks = chunk_text(text)
+        ids = [f"{item_id}_chunk_{i}" for i in range(len(chunks))]
+        metadatas = [{"source": "gdrive", "item_id": item_id, "filename": name, "filepath": f"Google Drive/{name}", "last_modified": last_modified, "chunk_index": i} for i in range(len(chunks))]
+        
+        doc_collection.add(documents=chunks, ids=ids, metadatas=metadatas)
+        print(f"Successfully embedded {len(chunks)} chunks for Google Drive/{name}")
+    except Exception as e:
+        print(f"Failed to process GDrive file {name}: {e}")
+
+async def sync_gdrive_cycle():
+    while True:
+        print("\n--- Starting Google Drive Sync Cycle ---")
+        try:
+            if not os.path.exists("token.json"):
+                print("No token.json found. Skipping Google Drive sync.")
+                await asyncio.sleep(300)
+                continue
+            
+            scopes = ['https://www.googleapis.com/auth/drive']
+            creds = Credentials.from_authorized_user_file('token.json', scopes)
+            service = build('drive', 'v3', credentials=creds)
+            
+            # Query files (ignore folders, only files owned by me)
+            results = service.files().list(
+                pageSize=100, fields="nextPageToken, files(id, name, modifiedTime, mimeType)",
+                q="mimeType != 'application/vnd.google-apps.folder' and 'me' in owners"
+            ).execute()
+            
+            items = results.get('files', [])
+            for item in items:
+                await process_gdrive_file(service, item)
+                
+        except Exception as e:
+            print(f"GDrive Sync Error: {e}")
+            traceback.print_exc()
+            
+        print("--- GDrive Sync Cycle Complete. Sleeping for 5 minutes ---")
+        await asyncio.sleep(300)
+
+async def main():
+    await asyncio.gather(
+        run_sync_engine(),
+        sync_gdrive_cycle()
+    )
+
 if __name__ == "__main__":
-    print("🚀 Booting up iLumina OneDrive Sync Engine...")
-    asyncio.run(run_sync_engine())
+    print("🚀 Booting up iLumina Multi-Cloud Sync Engine...")
+    asyncio.run(main())

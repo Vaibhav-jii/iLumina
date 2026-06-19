@@ -76,7 +76,7 @@ echo -e "${GREEN}  ✅ FastMCP Proxy running (PID: $PID_FASTMCP)${NC}"
 
 # 3. Start FastAPI Backend
 echo -e "${BLUE}[3/4]${NC} Starting FastAPI Backend on port 8000..."
-$PYTHON main.py &
+$PYTHON langgraph_main.py &
 PID_FASTAPI=$!
 sleep 2
 echo -e "${GREEN}  ✅ FastAPI Backend running (PID: $PID_FASTAPI)${NC}"

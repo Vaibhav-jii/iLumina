@@ -25,3 +25,11 @@ data/
 
 # Scratch and test files
 test_*.py
+
+# Google Cloud Credentials
+credentials.json
+client_secret.json
+token.json
+
+# Screenshots
+frontend/screenshots/

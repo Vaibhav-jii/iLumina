@@ -485,24 +485,23 @@ async def chat(
 ):
     """Process a chat message with tool calling and LLM Routing."""
     
-    # Get or create session history
-    history = load_session(session_id)
-
-    # Process image if uploaded
-    image_base64 = None
-    image_mime = None
-    if image:
-        image_data = await image.read()
-        image_base64 = base64.b64encode(image_data).decode('utf-8')
-        image_mime = image.content_type or "image/png"
-
-    append_message(session_id, "user", message, mode)
-    history = load_session(session_id)
-
     screenshots = []
     tool_calls_made = []
 
     try:
+        # Get or create session history
+        history = load_session(session_id)
+
+        # Process image if uploaded
+        image_base64 = None
+        image_mime = None
+        if image:
+            image_data = await image.read()
+            image_base64 = base64.b64encode(image_data).decode('utf-8')
+            image_mime = image.content_type or "image/png"
+
+        append_message(session_id, "user", message, mode)
+        history = load_session(session_id)
         # === IMAGE MODE: Use vision model directly ===
         if image_base64:
             vision_content = [
@@ -528,61 +527,101 @@ async def chat(
             append_message(session_id, "assistant", result_text)
             return ChatResponse(response=result_text)
 
-        # === TEXT MODE: Native LLM Agent Loop ===
+        # === TEXT MODE: Native LLM Agent Loop (LangGraph) ===
         
         # Fetch available tools
         available_tools = await fetch_tools_as_openai_schema()
         
         # Build message history for the LLM
-        chat_messages = [
-            {"role": "system", "content": "You are iLumina, an autonomous AI agent with browser automation. You MUST use tools sequentially to complete complex tasks. CRITICAL: 1) get_page_snapshot returns TEXT, not an image. 2) Only take_screenshot returns actual images. 3) IMPORTANT FOR DOCUMENTS: When a user asks you to explain, summarize, or query a document/resume, you MUST use `list_embedded_documents` first to find the exact filename if you don't know it. Then, use `query_documents` and explicitly pass `filename_filter` to ensure you don't mix up content from different files!"},
-        ]
+        system_prompt = """You are iLumina, an autonomous AI agent with browser automation. 
+You MUST use tools sequentially to complete complex tasks. 
+
+**Playwright Browser Rules:**
+1. ONLY `take_screenshot` returns images. `get_page_snapshot` returns TEXT.
+2. The `browser_navigate` and `get_page_snapshot` tools return MASSIVE accessibility trees that will flood your context window.
+3. NEVER print or echo raw MCP tool responses to the user. Use the tools silently and summarize the results in under 100 words.
+4. Always try to navigate to specific sub-URLs (e.g., /news, /technology) instead of starting at a root homepage.
+5. If the user asks you to interact with a page, use the elements returned in the snapshot to call `browser_click_element` or `browser_type_text`.
+6. CRITICAL: If an element ID (like "e1656") fails to click, DO NOT give up! Try clicking the exact text of the link instead (e.g. `target: "Nancy Guthrie update"`). The IDs are very fragile on dynamic sites!
+
+**Click Verification Rules (CRITICAL):**
+7. After calling `browser_click_element`, ALWAYS check the `state_changed` field in the result. If `state_changed` is false, the click may have failed silently — report this to the user.
+8. ALWAYS base your summary on the `page_content` field returned by the click tool. NEVER assume what happened based on the button text or label.
+9. Compare `url_before` and `url_after` — if they are the same and `state_changed` is false, the page did not change.
+10. If a click fails, try alternative selectors before giving up.
+
+**Document Search Rules:**
+1. When asked to explain or summarize a document, you MUST use `list_embedded_documents` first to find the exact filename.
+2. Then use `query_documents` and explicitly pass `filename_filter` to ensure you don't mix up content from different files!"""
+
+        chat_messages = [{"role": "system", "content": system_prompt}]
         for m in history[-20:]:
             chat_messages.append({"role": m["role"], "content": m["content"]})
             
-        MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "5"))
-        iterations = 0
-        result_text = ""
+        # Define LangGraph State and Nodes
+        from typing import Annotated, TypedDict
+        import operator
         
-        while iterations < MAX_ITERATIONS:
-            iterations += 1
-            result = await call_llm(
-                provider,
-                model_name,
-                messages=chat_messages,
-                temperature=0.3,
-                tools=available_tools if len(available_tools) > 0 else None
-            )
+        # We manually manage the list of messages in this simple state
+        class AgentState(TypedDict):
+            messages: list
+            session_id: str
+            provider: str
+            model_name: str
+            mode: str
+            available_tools: list
+            tool_calls_made: list
+            screenshots: list
+            iterations: int
             
-            if not result.get("tool_calls"):
-                result_text = result["content"]
-                break
+        async def llm_node(state: AgentState):
+            provider = state["provider"]
+            model_name = state["model_name"]
+            messages = state["messages"]
+            available_tools = state.get("available_tools")
+            
+            # Check max iterations
+            if state.get("iterations", 0) >= int(os.getenv("MAX_ITERATIONS", "5")):
+                messages.append({"role": "system", "content": "You have reached the maximum number of tool execution steps. Please summarize the information you have gathered so far and provide a final answer to the user."})
+                result = await call_llm(provider, model_name, messages, temperature=0.3, tools=None)
+                messages.append({"role": "assistant", "content": result["content"]})
+                return {"messages": messages}
                 
-            # Append assistant message with tool calls
-            chat_messages.append({
-                "role": "assistant",
-                "content": result.get("content") or None,
-                "tool_calls": result["tool_calls"]
-            })
+            result = await call_llm(provider, model_name, messages, temperature=0.3, tools=available_tools if available_tools else None)
             
-            # Execute all tools in parallel
+            msg = {"role": "assistant", "content": result.get("content")}
+            if result.get("tool_calls"):
+                msg["tool_calls"] = result["tool_calls"]
+                
+            messages.append(msg)
+            return {
+                "messages": messages,
+                "iterations": state.get("iterations", 0) + 1
+            }
+
+        async def tool_node(state: AgentState):
+            messages = state["messages"]
+            last_message = messages[-1]
+            tool_calls = last_message.get("tool_calls", [])
+            
             tasks = []
-            for tc in result["tool_calls"]:
+            tool_names = []
+            for tc in tool_calls:
                 tool_name = tc["function"]["name"]
+                tool_names.append(tool_name)
                 try:
                     tool_args = json.loads(tc["function"]["arguments"])
                 except json.JSONDecodeError:
                     tool_args = {}
-                    
-                tool_calls_made.append(tool_name)
-                print(f"🔧 Iteration {iterations}: LLM executed tool: {tool_name}({tool_args})")
                 
+                # Restore terminal logging so user can see what's happening
+                print(f"🔧 LLM executing tool: {tool_name}({tool_args})")
                 tasks.append(execute_mcp_tool(tool_name, tool_args))
                 
-            tool_results = await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
             
-            # Process results and append tool messages
-            for tc, tool_result in zip(result["tool_calls"], tool_results):
+            new_screenshots = []
+            for tc, tool_result in zip(tool_calls, results):
                 tool_name = tc["function"]["name"]
                 tool_call_id = tc["id"]
                 
@@ -590,9 +629,8 @@ async def chat(
                     tool_result_str = json.dumps({"error": str(tool_result)})
                 else:
                     tool_result_str = str(tool_result)
-                    screenshots.extend(_extract_screenshots(tool_result_str))
-                
-                # Clean result for context window
+                    new_screenshots.extend(_extract_screenshots(tool_result_str))
+                    
                 clean_result = tool_result_str
                 try:
                     parsed = json.loads(tool_result_str)
@@ -605,27 +643,84 @@ async def chat(
                 except (json.JSONDecodeError, TypeError):
                     pass
                 
-                # FORCE truncate to protect context window, regardless of format
-                # Bumping to 30,000 chars (~7k tokens) so the LLM can actually see link IDs at the bottom of the DOM
+                # Compress massive Playwright snapshots to preserve tokens
+                if tool_name in ("get_page_snapshot", "browser_click_element", "browser_type_text", "navigate_and_summarize"):
+                    # For tools that return JSON with page_content, extract and compress the page_content
+                    try:
+                        parsed_result = json.loads(clean_result)
+                        if isinstance(parsed_result, dict) and "page_content" in parsed_result:
+                            raw_content = parsed_result["page_content"]
+                            lines = raw_content.split('\n')
+                            compressed_lines = []
+                            for line in lines:
+                                lower_line = line.lower()
+                                if "link" in lower_line or "button" in lower_line or "heading" in lower_line or "textbox" in lower_line or "listitem" in lower_line or len(line.strip()) > 40:
+                                    compressed_lines.append(line)
+                            parsed_result["page_content"] = "\n".join(compressed_lines)
+                            clean_result = json.dumps(parsed_result, indent=2)
+                    except (json.JSONDecodeError, TypeError):
+                        # Fallback: raw text compression for get_page_snapshot
+                        lines = clean_result.split('\n')
+                        compressed_lines = []
+                        for line in lines:
+                            lower_line = line.lower()
+                            if "link" in lower_line or "button" in lower_line or "heading" in lower_line or "textbox" in lower_line or "listitem" in lower_line or len(line.strip()) > 40:
+                                compressed_lines.append(line)
+                        clean_result = "\n".join(compressed_lines)
+
+                # Cap size as a final safeguard
                 if len(clean_result) > 30000:
-                    clean_result = clean_result[:30000] + "\n... [CONTENT TRUNCATED TO SAVE CONTEXT WINDOW]"
-                        
-                chat_messages.append({
+                    half = 14500
+                    clean_result = clean_result[:half] + "\n... [MIDDLE CONTENT TRUNCATED] ...\n" + clean_result[-half:]
+                    
+                messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call_id,
                     "name": tool_name,
                     "content": clean_result
                 })
                 
-        # Handle hitting MAX_ITERATIONS cap
-        if iterations >= MAX_ITERATIONS:
-            print("⚠️ Reached max iterations cap. Asking model to summarize.")
-            chat_messages.append({
-                "role": "system",
-                "content": "You have reached the maximum number of tool execution steps. Please summarize the information you have gathered so far and provide a final answer to the user."
-            })
-            final_result = await call_llm(provider, model_name, messages=chat_messages, temperature=0.3, tools=None)
-            result_text = final_result["content"]
+            return {
+                "messages": messages,
+                "tool_calls_made": state.get("tool_calls_made", []) + tool_names,
+                "screenshots": state.get("screenshots", []) + new_screenshots
+            }
+
+        from langgraph.graph import StateGraph, END
+        def should_continue(state: AgentState):
+            last_message = state["messages"][-1]
+            if last_message.get("tool_calls"):
+                return "tools"
+            return END
+
+        # Build Graph
+        workflow = StateGraph(AgentState)
+        workflow.add_node("agent", llm_node)
+        workflow.add_node("tools", tool_node)
+        workflow.set_entry_point("agent")
+        workflow.add_conditional_edges("agent", should_continue, {"tools": "tools", END: END})
+        workflow.add_edge("tools", "agent")
+        agent_app = workflow.compile()
+        
+        # Run Graph
+        initial_state = {
+            "messages": chat_messages,
+            "session_id": session_id,
+            "provider": provider,
+            "model_name": model_name,
+            "mode": mode,
+            "available_tools": available_tools,
+            "tool_calls_made": [],
+            "screenshots": [],
+            "iterations": 0
+        }
+        
+        final_state = await agent_app.ainvoke(initial_state)
+        
+        # Process Final Results
+        result_text = final_state["messages"][-1].get("content") or "Finished tool execution."
+        screenshots = final_state.get("screenshots", [])
+        tool_calls_made = final_state.get("tool_calls_made", [])
 
         # Inject screenshots into markdown so they persist in the DB
         for url in screenshots:

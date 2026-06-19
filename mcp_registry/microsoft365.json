@@ -1,0 +1,11 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "description": "Provides a bridge between Microsoft 365 services and natural language interfaces, enabling access to email, calendar, OneDrive files, and Excel operations through the Microsoft Graph API with simplified authentication and parameter handling.",
+  "name": "com.pulsemcp.mirror/softeria-microsoft-365",
+  "repository": {
+    "source": "github",
+    "url": "https://github.com/softeria/ms-365-mcp-server"
+  },
+  "title": "Microsoft 365",
+  "version": "0.0.0"
+}

@@ -9,6 +9,13 @@
 let sessionId = crypto.randomUUID();
 let isProcessing = false;
 let pendingImage = null; // { file: File, preview: dataURL }
+let currentMode = 'chat'; // 'chat', 'web', 'documents'
+
+// Voice state
+let isRecording = false;
+let recognition = null;
+let ttsEnabled = false;
+let currentUtterance = null;
 
 // --- DOM References ---
 const messagesEl = document.getElementById('messages');
@@ -29,7 +36,6 @@ document.addEventListener('DOMContentLoaded', () => {
     checkHealth();
     loadTools();
     loadChats();
-    loadDocs();
     inputEl.addEventListener('input', updateSendButton);
 
     // Drag & drop support
@@ -64,6 +70,47 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 });
+
+// --- Mode Switching ---
+function switchMode(mode) {
+    currentMode = mode;
+    
+    // Update active state on primary sidebar buttons
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    document.getElementById(`mode-${mode}-btn`).classList.add('active');
+    
+    // Update active section in secondary sidebar
+    document.querySelectorAll('.mode-section').forEach(sec => {
+        sec.classList.remove('active');
+        sec.style.display = 'none';
+    });
+    const activeSection = document.getElementById(`section-${mode}`);
+    if (activeSection) {
+        activeSection.classList.add('active');
+        activeSection.style.display = 'flex';
+    }
+    
+    // Update sidebar title
+    const titles = {
+        'chat': 'Chat History',
+        'web': 'Web Engine',
+        'documents': 'Knowledge Base'
+    };
+    document.getElementById('sidebar-title').innerText = titles[mode];
+    
+    // Auto-focus input
+    inputEl.focus();
+    
+    // Reload chat history for the new mode
+    loadChats();
+    
+    // If documents mode, load the tree
+    if (mode === 'documents') {
+        fetchDocumentTree();
+    }
+}
 
 // --- Image Handling ---
 function triggerImageUpload() {
@@ -161,7 +208,7 @@ async function loadTools() {
 // --- Sidebar Loaders ---
 async function loadChats() {
     try {
-        const res = await fetch('/api/chats', { cache: 'no-store' });
+        const res = await fetch(`/api/chats?mode=${currentMode}`, { cache: 'no-store' });
         const chats = await res.json();
         const chatsList = document.getElementById('chats-list');
         
@@ -190,6 +237,102 @@ async function loadChats() {
     } catch (e) {
         document.getElementById('chats-list').innerHTML = '<div class="tool-item loading">Error loading</div>';
     }
+}
+
+async function fetchDocumentTree() {
+    const containers = {
+        onedrive: document.getElementById('onedrive-tree-container'),
+        gdrive: document.getElementById('gdrive-tree-container'),
+        local: document.getElementById('local-tree-container')
+    };
+    
+    try {
+        const res = await fetch('/api/documents/tree');
+        const data = await res.json(); // returns { onedrive: {}, gdrive: {}, local: {} }
+        
+        for (const [source, tree] of Object.entries(data)) {
+            const container = containers[source];
+            if (!container) continue;
+
+            if (Object.keys(tree).length > 0) {
+                container.innerHTML = renderTreeHtml(tree);
+                
+                // Add click handlers for folders
+                container.querySelectorAll('.tree-folder-header').forEach(header => {
+                    header.addEventListener('click', (e) => {
+                        const childrenContainer = e.currentTarget.nextElementSibling;
+                        const icon = e.currentTarget.querySelector('.folder-icon');
+                        if (childrenContainer.style.display === 'none') {
+                            childrenContainer.style.display = 'block';
+                            icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><polyline points="12 11 12 17"></polyline><polyline points="9 14 15 14"></polyline></svg>';
+                        } else {
+                            childrenContainer.style.display = 'none';
+                            icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>';
+                        }
+                    });
+                });
+            } else {
+                container.innerHTML = '<div class="tree-loading" style="color: #666;">No documents synced yet.</div>';
+            }
+        }
+    } catch (e) {
+        Object.values(containers).forEach(container => {
+            if(container) container.innerHTML = '<div class="tree-loading" style="color: #ff5555;">Error loading tree</div>';
+        });
+        console.error(e);
+    }
+}
+
+function renderTreeHtml(treeNode) {
+    let html = '<ul class="tree-list">';
+    
+    // Sort keys: directories first, then files
+    const keys = Object.keys(treeNode).sort((a, b) => {
+        const nodeA = treeNode[a];
+        const nodeB = treeNode[b];
+        if (nodeA._type === 'directory' && nodeB._type !== 'directory') return -1;
+        if (nodeA._type !== 'directory' && nodeB._type === 'directory') return 1;
+        return a.localeCompare(b);
+    });
+    
+    for (const key of keys) {
+        const node = treeNode[key];
+        
+        if (node._type === 'directory') {
+            html += `
+                <li class="tree-item tree-folder">
+                    <div class="tree-folder-header">
+                        <span class="folder-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                        </span>
+                        <span class="tree-label">${escapeHtml(key)}</span>
+                    </div>
+                    <div class="tree-children" style="display: block;">
+                        ${renderTreeHtml(node.children)}
+                    </div>
+                </li>
+            `;
+        } else if (node._type === 'file') {
+            const ext = key.split('.').pop().toLowerCase();
+            let icon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>';
+            
+            if (ext === 'pdf') {
+                icon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ff5555" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M16 13H8"></path><path d="M16 17H8"></path><path d="M10 9H8"></path></svg>';
+            } else if (ext === 'doc' || ext === 'docx') {
+                icon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3296ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M16 13H8"></path><path d="M16 17H8"></path><path d="M10 9H8"></path></svg>';
+            }
+            
+            html += `
+                <li class="tree-item tree-file" title="Path: ${escapeHtml(node.path)}\nLast Modified: ${node.details.last_modified}">
+                    <span class="file-icon">${icon}</span>
+                    <span class="tree-label">${escapeHtml(node.details.name)}</span>
+                </li>
+            `;
+        }
+    }
+    
+    html += '</ul>';
+    return html;
 }
 
 async function editSessionName(id, currentName, event) {
@@ -234,63 +377,13 @@ async function deleteSession(id, event) {
     }
 }
 
-async function loadDocs() {
-    try {
-        const res = await fetch('/api/documents', { cache: 'no-store' });
-        const data = await res.json();
-        const docsList = document.getElementById('docs-list');
-        
-        if (data.files && data.files.length > 0) {
-            const localDocs = data.files.filter(f => f.source === 'local' || typeof f === 'string');
-            const oneDriveDocs = data.files.filter(f => f.source === 'onedrive');
-            
-            let html = '';
-            
-            if (localDocs.length > 0) {
-                html += `
-                <details open style="margin-bottom: 8px;">
-                    <summary style="cursor: pointer; font-size: 0.9em; opacity: 0.8; margin-left: 5px;">📁 Local Files (${localDocs.length})</summary>
-                    <div style="margin-top: 5px; margin-left: 10px;">
-                        ${localDocs.map(f => `
-                            <div class="tool-item" style="padding: 5px 10px;">
-                                <div class="tool-desc" style="display:flex; align-items:center; gap:5px; width: 100%;">
-                                    <span>📄</span> <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(f.name || f)}">${escapeHtml(f.name || f)}</span>
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
-                </details>`;
-            }
-            
-            if (oneDriveDocs.length > 0) {
-                html += `
-                <details open style="margin-bottom: 8px;">
-                    <summary style="cursor: pointer; font-size: 0.9em; opacity: 0.8; margin-left: 5px; color: #0078d4;">☁️ OneDrive (${oneDriveDocs.length})</summary>
-                    <div style="margin-top: 5px; margin-left: 10px;">
-                        ${oneDriveDocs.map(f => `
-                            <div class="tool-item" style="padding: 5px 10px; border-left: 2px solid #0078d4;">
-                                <div class="tool-desc" style="display:flex; align-items:center; gap:5px; width: 100%;">
-                                    <span>📄</span> <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(f.name || f)}">${escapeHtml(f.name || f)}</span>
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
-                </details>`;
-            }
-            
-            docsList.innerHTML = html;
-        } else {
-            docsList.innerHTML = '<div class="tool-item loading">No documents embedded</div>';
-        }
-    } catch (e) {
-        document.getElementById('docs-list').innerHTML = '<div class="tool-item loading">Error loading</div>';
-    }
-}
+
 
 async function loadSession(sid) {
     try {
         const res = await fetch(`/api/chats/${sid}`);
-        const history = await res.json();
+        const data = await res.json();
+        const history = data.messages || [];
         
         if (history && history.length > 0) {
             sessionId = sid;
@@ -357,6 +450,7 @@ async function sendMessage() {
     const formData = new FormData();
     formData.append('message', text || 'Analyze this image');
     formData.append('session_id', sessionId);
+    formData.append('mode', currentMode);
     
     const selector = document.getElementById('model-selector');
     if (selector) {
@@ -407,10 +501,13 @@ async function sendMessage() {
 
         // Refresh sidebar after successful message
         loadChats();
-        loadDocs();
+        if (currentMode === 'documents') {
+            fetchDocumentTree();
+        }
 
     } catch (e) {
         thinkingEl.remove();
+        console.error("Chat Error:", e);
         addMessage('assistant', `⚠️ **Connection error:** Could not reach the server. Make sure all services are running.`);
     } finally {
         isProcessing = false;
@@ -454,31 +551,28 @@ function addMessage(role, content, screenshots = [], userImage = null) {
 
     contentDiv.appendChild(bubble);
 
-    // Add screenshots
-    if (screenshots && screenshots.length > 0) {
-        screenshots.forEach(ss => {
-            if (ss && ss.data) {
-                const container = document.createElement('div');
-                container.className = 'screenshot-container';
-
-                const img = document.createElement('img');
-                img.src = `data:${ss.mimeType || 'image/png'};base64,${ss.data}`;
-                img.alt = 'Browser Screenshot';
-                img.loading = 'lazy';
-                img.onclick = (e) => {
-                    e.stopPropagation();
-                    openLightbox(img.src);
-                };
-
-                container.appendChild(img);
-                contentDiv.appendChild(container);
-            }
-        });
-    }
+    // Attach lightbox to any markdown images
+    const markdownImages = bubble.querySelectorAll('img');
+    markdownImages.forEach(img => {
+        // Add styling classes if needed or just the click handler
+        img.style.maxWidth = '100%';
+        img.style.borderRadius = '8px';
+        img.style.marginTop = '8px';
+        img.style.cursor = 'pointer';
+        img.onclick = (e) => {
+            e.stopPropagation();
+            openLightbox(img.src);
+        };
+    });
 
     msgDiv.appendChild(avatar);
     msgDiv.appendChild(contentDiv);
     messagesEl.appendChild(msgDiv);
+
+    // Auto-speak assistant responses if TTS is enabled
+    if (role === 'assistant' && ttsEnabled) {
+        speakText(content, bubble);
+    }
 
     scrollToBottom();
 }
@@ -575,8 +669,16 @@ document.addEventListener('keydown', (e) => {
 
 // --- Sidebar ---
 function toggleSidebar() {
-    const sidebar = document.getElementById('sidebar');
-    sidebar.classList.toggle('visible');
+    const secondarySidebar = document.getElementById('secondary-sidebar');
+    const primarySidebar = document.getElementById('primary-sidebar');
+    
+    // For desktop toggle
+    secondarySidebar.classList.toggle('collapsed');
+    primarySidebar.classList.toggle('collapsed');
+    
+    // For mobile toggle
+    secondarySidebar.classList.toggle('visible');
+    primarySidebar.classList.toggle('visible');
 }
 
 // --- Utilities ---
@@ -625,4 +727,198 @@ function createWelcomeScreen() {
         </div>
     `;
     return div;
+}
+
+// ============================================
+//  VOICE-TO-VOICE (Browser Web Speech API)
+// ============================================
+
+/**
+ * Initialize the SpeechRecognition instance.
+ * Only created once, reused for all voice interactions.
+ */
+function initSpeechRecognition() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+        alert('Your browser does not support Speech Recognition. Please use Chrome or Edge.');
+        return null;
+    }
+
+    const rec = new SpeechRecognition();
+    rec.continuous = false;       // Stop after one sentence
+    rec.interimResults = true;    // Show partial results while speaking
+    rec.lang = 'en-US';
+    rec.maxAlternatives = 1;
+
+    rec.onstart = () => {
+        isRecording = true;
+        document.getElementById('voice-btn').classList.add('recording');
+        document.getElementById('voice-indicator').classList.add('active');
+        document.getElementById('voice-status').textContent = 'Listening...';
+    };
+
+    rec.onresult = (event) => {
+        let transcript = '';
+        let isFinal = false;
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+            transcript += event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+                isFinal = true;
+            }
+        }
+
+        // Show partial transcript in the input box
+        inputEl.value = transcript;
+        autoResize(inputEl);
+        updateSendButton();
+
+        if (isFinal) {
+            document.getElementById('voice-status').textContent = 'Got it!';
+            // Auto-send after a short delay
+            setTimeout(() => {
+                if (inputEl.value.trim()) {
+                    sendMessage();
+                }
+            }, 400);
+        }
+    };
+
+    rec.onerror = (event) => {
+        console.error('Speech recognition error:', event.error);
+        if (event.error === 'not-allowed') {
+            alert('Microphone access denied. Please allow microphone access in your browser settings.');
+        }
+        stopRecording();
+    };
+
+    rec.onend = () => {
+        stopRecording();
+    };
+
+    return rec;
+}
+
+function stopRecording() {
+    isRecording = false;
+    document.getElementById('voice-btn').classList.remove('recording');
+    document.getElementById('voice-indicator').classList.remove('active');
+}
+
+/**
+ * Toggle voice recording on/off.
+ */
+function toggleVoiceInput() {
+    if (isRecording) {
+        // Stop
+        if (recognition) recognition.stop();
+        stopRecording();
+        return;
+    }
+
+    // Stop any ongoing TTS
+    if (window.speechSynthesis.speaking) {
+        window.speechSynthesis.cancel();
+    }
+
+    // Start recording
+    if (!recognition) {
+        recognition = initSpeechRecognition();
+    }
+    if (recognition) {
+        try {
+            recognition.start();
+        } catch (e) {
+            // Already started, stop and restart
+            recognition.stop();
+            setTimeout(() => recognition.start(), 200);
+        }
+    }
+}
+
+/**
+ * Toggle TTS (text-to-speech) on/off for assistant responses.
+ */
+function toggleTTS() {
+    ttsEnabled = !ttsEnabled;
+    const btn = document.getElementById('tts-btn');
+    btn.classList.toggle('active', ttsEnabled);
+    btn.title = ttsEnabled ? 'Voice responses ON (click to mute)' : 'Voice responses OFF (click to enable)';
+
+    // If turning off, stop any current speech
+    if (!ttsEnabled && window.speechSynthesis.speaking) {
+        window.speechSynthesis.cancel();
+    }
+}
+
+/**
+ * Speak the given text using the browser's SpeechSynthesis API.
+ * Strips markdown formatting before speaking.
+ */
+function speakText(text, bubbleEl = null) {
+    if (!ttsEnabled || !text) return;
+
+    // Cancel any ongoing speech
+    window.speechSynthesis.cancel();
+
+    const cleanText = stripMarkdown(text);
+    
+    // Split long text into chunks (browsers have a ~5000 char limit)
+    const maxLen = 4000;
+    const chunks = [];
+    for (let i = 0; i < cleanText.length; i += maxLen) {
+        chunks.push(cleanText.substring(i, i + maxLen));
+    }
+
+    // Highlight the bubble while speaking
+    if (bubbleEl) bubbleEl.classList.add('speaking');
+
+    chunks.forEach((chunk, idx) => {
+        const utterance = new SpeechSynthesisUtterance(chunk);
+        utterance.rate = 1.05;   // Slightly faster for natural feel
+        utterance.pitch = 1.0;
+        utterance.volume = 1.0;
+        utterance.lang = 'en-US';
+
+        // Pick a good voice if available
+        const voices = window.speechSynthesis.getVoices();
+        const preferred = voices.find(v => 
+            v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('Daniel')
+        );
+        if (preferred) utterance.voice = preferred;
+
+        if (idx === chunks.length - 1) {
+            utterance.onend = () => {
+                if (bubbleEl) bubbleEl.classList.remove('speaking');
+            };
+        }
+
+        window.speechSynthesis.speak(utterance);
+    });
+}
+
+/**
+ * Strip markdown formatting to produce clean speakable text.
+ */
+function stripMarkdown(md) {
+    return md
+        .replace(/!\[.*?\]\(.*?\)/g, '')           // Remove images
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')   // Links → text
+        .replace(/#{1,6}\s+/g, '')                   // Headings
+        .replace(/(\*{1,3}|_{1,3})(.*?)\1/g, '$2') // Bold/Italic
+        .replace(/`{1,3}[^`]*`{1,3}/g, '')          // Inline/block code
+        .replace(/^\s*[-*+]\s+/gm, '')              // List markers
+        .replace(/^\s*\d+\.\s+/gm, '')              // Numbered lists
+        .replace(/^\s*>\s+/gm, '')                  // Blockquotes
+        .replace(/---+/g, '')                        // Horizontal rules
+        .replace(/\n{2,}/g, '. ')                    // Paragraph breaks → pause
+        .replace(/\n/g, ' ')                         // Newlines → space
+        .replace(/\s{2,}/g, ' ')                     // Collapse spaces
+        .trim();
+}
+
+// Pre-load voices (some browsers need this)
+if (window.speechSynthesis) {
+    window.speechSynthesis.getVoices();
+    window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
 }

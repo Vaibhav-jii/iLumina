@@ -8,3 +8,6 @@ groq
 google-genai
 duckduckgo-search
 openai
+chromadb
+PyPDF2
+python-docx

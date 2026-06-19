@@ -35,6 +35,32 @@ PLAYWRIGHT_MCP_URL = os.getenv("PLAYWRIGHT_MCP_URL", "http://localhost:9222/mcp"
 # --- FastMCP Server Instance ---
 mcp = FastMCP("PulseMCP-PlaywrightProxy")
 
+# --- Persistent Playwright Browser Session ---
+# All browser tools share this single client so navigate→click→snapshot
+# all operate on the SAME browser tab (fixes session isolation bug).
+_playwright_client = None
+_playwright_lock = asyncio.Lock()
+
+async def get_browser_client():
+    """Get or create a persistent Playwright MCP client session."""
+    global _playwright_client
+    async with _playwright_lock:
+        if _playwright_client is None:
+            _playwright_client = Client(PLAYWRIGHT_MCP_URL)
+            await _playwright_client.__aenter__()
+        return _playwright_client
+
+async def reset_browser_client():
+    """Reset the persistent client if it becomes stale."""
+    global _playwright_client
+    async with _playwright_lock:
+        if _playwright_client is not None:
+            try:
+                await _playwright_client.__aexit__(None, None, None)
+            except Exception:
+                pass
+            _playwright_client = None
+
 # --- ChromaDB Initialization ---
 CHROMA_DIR = os.path.join(os.path.dirname(__file__), "data", "chroma_db")
 os.makedirs(CHROMA_DIR, exist_ok=True)
@@ -79,11 +105,12 @@ async def navigate_to(url: str) -> str:
         url: The URL to navigate to (e.g., 'https://example.com')
     """
     try:
-        async with Client(PLAYWRIGHT_MCP_URL) as client:
-            result = await client.call_tool("browser_navigate", {"url": url})
-            texts = _extract_texts(result)
-            return "\n".join(texts) if texts else "Navigation completed."
+        client = await get_browser_client()
+        result = await client.call_tool("browser_navigate", {"url": url})
+        texts = _extract_texts(result)
+        return "\n".join(texts) if texts else "Navigation completed."
     except Exception as e:
+        await reset_browser_client()
         return json.dumps({"error": f"navigate_to failed: {str(e)}"})
 
 
@@ -93,16 +120,16 @@ async def take_screenshot() -> str:
     Returns the screenshot as a JSON string with base64-encoded PNG data.
     """
     try:
-        async with Client(PLAYWRIGHT_MCP_URL) as client:
-            # Playwright MCP tool is 'browser_take_screenshot' with required 'type' param
-            await asyncio.sleep(1) # wait briefly just in case
-            result = await client.call_tool("browser_take_screenshot", {"type": "png", "fullPage": True})
-            img = _extract_image(result)
-            if img:
-                return json.dumps(img)
-            texts = _extract_texts(result)
-            return "\n".join(texts) if texts else json.dumps({"error": "No screenshot data"})
+        client = await get_browser_client()
+        await asyncio.sleep(1)
+        result = await client.call_tool("browser_take_screenshot", {"type": "png", "fullPage": True})
+        img = _extract_image(result)
+        if img:
+            return json.dumps(img)
+        texts = _extract_texts(result)
+        return "\n".join(texts) if texts else json.dumps({"error": "No screenshot data"})
     except Exception as e:
+        await reset_browser_client()
         return json.dumps({"error": f"take_screenshot failed: {str(e)}"})
 
 
@@ -112,11 +139,12 @@ async def get_page_snapshot() -> str:
     Returns a text representation of the page content.
     """
     try:
-        async with Client(PLAYWRIGHT_MCP_URL) as client:
-            result = await client.call_tool("browser_snapshot", {})
-            texts = _extract_texts(result)
-            return "\n".join(texts) if texts else "No snapshot data."
+        client = await get_browser_client()
+        result = await client.call_tool("browser_snapshot", {})
+        texts = _extract_texts(result)
+        return "\n".join(texts) if texts else "No snapshot data."
     except Exception as e:
+        await reset_browser_client()
         return json.dumps({"error": f"get_page_snapshot failed: {str(e)}"})
 
 
@@ -129,69 +157,160 @@ async def navigate_and_summarize(url: str) -> str:
         url: The URL to navigate to and analyze
     """
     try:
-        async with Client(PLAYWRIGHT_MCP_URL) as client:
-            # Step 1: Navigate
-            await client.call_tool("browser_navigate", {"url": url})
+        client = await get_browser_client()
+        # Step 1: Navigate
+        await client.call_tool("browser_navigate", {"url": url})
 
-            # Wait for page to render
-            await asyncio.sleep(2)
+        # Wait for page to render
+        await asyncio.sleep(2)
 
-            # Step 2: Screenshot + Snapshot (sequential to avoid session conflicts)
-            screenshot_result = await client.call_tool(
-                "browser_take_screenshot", {"type": "png", "fullPage": True}
-            )
-            snapshot_result = await client.call_tool("browser_snapshot", {})
+        # Step 2: Screenshot + Snapshot
+        screenshot_result = await client.call_tool(
+            "browser_take_screenshot", {"type": "png", "fullPage": True}
+        )
+        snapshot_result = await client.call_tool("browser_snapshot", {})
 
-            # Process screenshot
-            screenshot_data = _extract_image(screenshot_result)
+        # Process screenshot
+        screenshot_data = _extract_image(screenshot_result)
 
-            # Process snapshot
-            snapshot_texts = _extract_texts(snapshot_result)
+        # Process snapshot
+        snapshot_texts = _extract_texts(snapshot_result)
 
-            return json.dumps({
-                "screenshot": screenshot_data,
-                "page_content": "\n".join(snapshot_texts) if snapshot_texts else "No content",
-            })
+        return json.dumps({
+            "screenshot": screenshot_data,
+            "page_content": "\n".join(snapshot_texts) if snapshot_texts else "No content",
+        })
     except Exception as e:
+        await reset_browser_client()
         return json.dumps({"error": f"navigate_and_summarize failed: {str(e)}"})
 
 
 @mcp.tool
 async def browser_click_element(target: str) -> str:
-    """Click on a page element using its accessibility ref target.
-
+    """Click on a page element using its exact text or accessibility ref target.
+    This tool captures page state BEFORE and AFTER clicking to verify the click actually worked.
+    Returns: status, state_changed (bool), url_before, url_after, page_content (post-click snapshot).
+    
     Args:
-        target: The ref target of the element to click (from browser_snapshot)
+        target: The exact text of the element or the ref target ID.
     """
     try:
-        async with Client(PLAYWRIGHT_MCP_URL) as client:
+        # Auto-format bare text into Playwright text selectors
+        if not target.isdigit() and not target.startswith("text=") and target.find("=") == -1 and not target.startswith("#") and not target.startswith("."):
+            if '"' not in target:
+                target = f'text="{target}"'
+            else:
+                target = f"text={target}"
+                
+        client = await get_browser_client()
+        
+        # --- BEFORE state ---
+        try:
+            before_snapshot = await client.call_tool("browser_snapshot", {})
+            before_texts = _extract_texts(before_snapshot)
+            before_text = "\n".join(before_texts) if before_texts else ""
+            # Extract URL and title from the snapshot header
+            before_url = ""
+            before_title = ""
+            for line in before_texts[:5]:
+                if "url:" in line.lower():
+                    before_url = line.split(":", 1)[-1].strip()
+                if "title:" in line.lower():
+                    before_title = line.split(":", 1)[-1].strip()
+        except Exception:
+            before_url = "unknown"
+            before_title = "unknown"
+            before_text = ""
+        
+        # --- CLICK ---
+        try:
             result = await client.call_tool("browser_click", {"target": target})
             texts = _extract_texts(result)
-            return "\n".join(texts) if texts else "Click performed."
+            result_text_str = " ".join(texts).lower() if texts else ""
+            if "failed" in result_text_str or "not found" in result_text_str or "error" in result_text_str:
+                return json.dumps({
+                    "error": f"Playwright could not find or click '{target}'. Try clicking a different TEXT substring or a CSS selector instead!",
+                    "playwright_output": result_text_str
+                })
+        except Exception as e:
+            return json.dumps({"error": f"Failed to click '{target}'. Try using a valid CSS selector or different TEXT! Error: {str(e)}"})
+        
+        # Wait for navigation/animation/network
+        await asyncio.sleep(2)
+        
+        # --- AFTER state ---
+        screenshot_result = await client.call_tool("browser_take_screenshot", {"type": "png", "fullPage": True})
+        after_snapshot = await client.call_tool("browser_snapshot", {})
+        
+        screenshot_data = _extract_image(screenshot_result)
+        after_texts = _extract_texts(after_snapshot)
+        after_text = "\n".join(after_texts) if after_texts else "No content"
+        
+        after_url = ""
+        after_title = ""
+        for line in after_texts[:5]:
+            if "url:" in line.lower():
+                after_url = line.split(":", 1)[-1].strip()
+            if "title:" in line.lower():
+                after_title = line.split(":", 1)[-1].strip()
+        
+        # --- Compare states ---
+        state_changed = (before_url != after_url) or (before_title != after_title) or (before_text[:500] != after_text[:500])
+        
+        return json.dumps({
+            "status": f"Clicked '{target}'",
+            "state_changed": state_changed,
+            "url_before": before_url,
+            "url_after": after_url,
+            "title_before": before_title,
+            "title_after": after_title,
+            "screenshot": screenshot_data,
+            "page_content": after_text
+        })
     except Exception as e:
-        return json.dumps({"error": f"browser_click failed: {str(e)}"})
+        await reset_browser_client()
+        return json.dumps({"error": f"browser_click_element failed completely: {str(e)}"})
 
 
 @mcp.tool
 async def browser_type_text(target: str, text: str, submit: bool = False) -> str:
     """Type text into a page element.
+    This tool automatically takes a screenshot and returns the new page snapshot after typing!
 
     Args:
-        target: The ref target of the element to type into (from browser_snapshot)
+        target: The exact text of the input field or its ref target ID.
         text: Text to type into the element
         submit: Whether to submit the form after typing
     """
     try:
-        async with Client(PLAYWRIGHT_MCP_URL) as client:
-            result = await client.call_tool("browser_type", {
+        client = await get_browser_client()
+        try:
+            await client.call_tool("browser_type", {
                 "target": target,
                 "text": text,
                 "submit": submit,
             })
-            texts = _extract_texts(result)
-            return "\n".join(texts) if texts else "Text typed."
+        except Exception as e:
+            return json.dumps({"error": f"Failed to type into '{target}'. Error: {str(e)}"})
+        
+        # Wait for any potential navigation or UI updates
+        await asyncio.sleep(1.5)
+        
+        # Automatically grab new state
+        screenshot_result = await client.call_tool("browser_take_screenshot", {"type": "png", "fullPage": True})
+        snapshot_result = await client.call_tool("browser_snapshot", {})
+        
+        screenshot_data = _extract_image(screenshot_result)
+        snapshot_texts = _extract_texts(snapshot_result)
+        
+        return json.dumps({
+            "status": f"Successfully typed into '{target}'",
+            "screenshot": screenshot_data,
+            "page_content": "\n".join(snapshot_texts) if snapshot_texts else "No content"
+        })
     except Exception as e:
-        return json.dumps({"error": f"browser_type failed: {str(e)}"})
+        await reset_browser_client()
+        return json.dumps({"error": f"browser_type_text failed completely: {str(e)}"})
 
 
 def _chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> list[str]:
@@ -254,60 +373,29 @@ def embed_document(file_path: str) -> str:
     except Exception as e:
         return json.dumps({"error": f"Failed to embed document: {str(e)}"})
 
-@mcp.tool
-async def embed_onedrive_document(item_id: str, filename: str) -> str:
-    """Read a document from Microsoft OneDrive by its item_id, generate embeddings, and store them persistently."""
-    if not doc_collection:
-        return json.dumps({"error": "ChromaDB not initialized. Check server logs."})
-        
-    try:
-        # Check if already embedded
-        results = doc_collection.get(where={"file_path": item_id})
-        if results and results["ids"]:
-            return json.dumps({"status": "Document already embedded."})
-            
-        # Fetch content from OneDrive
-        async with stdio_client(get_onedrive_server_params()) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool("get_file", {"item_id": item_id})
-                texts = _extract_texts(result)
-                text = "\n".join(texts)
-                
-        if not text.strip() or "File not found" in text:
-            return json.dumps({"error": "Document is empty or could not be read."})
-            
-        chunks = _chunk_text(text)
-        
-        ids = [str(uuid.uuid4()) for _ in chunks]
-        metadatas = [{"file_path": item_id, "filename": filename, "source": "onedrive"} for _ in chunks]
-        
-        doc_collection.add(
-            documents=chunks,
-            metadatas=metadatas,
-            ids=ids
-        )
-        
-        return json.dumps({"status": f"Successfully embedded {len(chunks)} chunks from OneDrive: {filename}."})
-    except Exception as e:
-        return json.dumps({"error": f"Failed to embed OneDrive document: {str(e)}"})
+
 
 @mcp.tool
-def query_documents(query: str, n_results: int = 3) -> str:
+def query_documents(query: str, n_results: int = 5, filename_filter: str = None) -> str:
     """Search through all previously embedded documents for text relevant to the query.
     
     Args:
         query: The search text or question.
-        n_results: Number of relevant chunks to return (default 3).
+        n_results: Number of relevant chunks to return (default 5).
+        filename_filter: If provided, restricts the search to a specific filename (exact match) to avoid mixing up different documents.
     """
     if not doc_collection:
         return json.dumps({"error": "ChromaDB not initialized."})
         
     try:
-        results = doc_collection.query(
-            query_texts=[query],
-            n_results=n_results
-        )
+        kwargs = {
+            "query_texts": [query],
+            "n_results": n_results
+        }
+        if filename_filter:
+            kwargs["where"] = {"filename": filename_filter}
+            
+        results = doc_collection.query(**kwargs)
         
         if not results or not results["documents"] or not results["documents"][0]:
             return json.dumps({"status": "No relevant documents found."})
@@ -422,50 +510,7 @@ async def list_local_directory(path: str) -> str:
     except Exception as e:
         return json.dumps({"error": f"Directory list failed: {str(e)}"})
 
-# --- OneDrive MCP Tools ---
-def get_onedrive_server_params() -> StdioServerParameters:
-    onedrive_dir = os.path.join(os.path.dirname(__file__), "onedrive_mcp")
-    index_js = os.path.join(onedrive_dir, "dist", "index.js")
-    return StdioServerParameters(command="node", args=[index_js], env=os.environ.copy())
 
-@mcp.tool
-async def onedrive_list_files(folder_path: str = "root") -> str:
-    """List files and folders in a specific Microsoft OneDrive path. (Default is 'root')"""
-    try:
-        async with stdio_client(get_onedrive_server_params()) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool("list_files", {"path": folder_path})
-                texts = _extract_texts(result)
-                return "\n".join(texts) if texts else "Folder empty."
-    except Exception as e:
-        return json.dumps({"error": f"OneDrive list failed: {str(e)}"})
-
-@mcp.tool
-async def onedrive_search_files(query: str) -> str:
-    """Search for files in Microsoft OneDrive by name or content."""
-    try:
-        async with stdio_client(get_onedrive_server_params()) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool("search_files", {"query": query})
-                texts = _extract_texts(result)
-                return "\n".join(texts) if texts else "No files found."
-    except Exception as e:
-        return json.dumps({"error": f"OneDrive search failed: {str(e)}"})
-        
-@mcp.tool
-async def onedrive_read_file(item_id: str) -> str:
-    """Read details or content of a Microsoft OneDrive file by its item_id."""
-    try:
-        async with stdio_client(get_onedrive_server_params()) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool("get_file", {"item_id": item_id})
-                texts = _extract_texts(result)
-                return "\n".join(texts) if texts else "File empty."
-    except Exception as e:
-        return json.dumps({"error": f"OneDrive read failed: {str(e)}"})
 # --- Run the server ---
 if __name__ == "__main__":
     port = int(os.getenv("FASTMCP_PORT", "8001"))

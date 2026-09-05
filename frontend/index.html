@@ -1,302 +1,381 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="iLumina — AI Chatbot with live browser automation powered by Playwright MCP">
-    <title>iLumina — Browser AI Chatbot</title>
+    <title>iLumina</title>
+    
+    <!-- Google Fonts: Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
-        rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    
+    <!-- Marked.js Markdown Parser -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="/static/css/main.css">
+    <link rel="stylesheet" href="/static/css/components.css">
 </head>
+<body class="dark-theme">
 
-<body>
-    <div id="app">
-        <!-- Primary Sidebar (Modes) -->
-        <nav id="primary-sidebar" class="primary-sidebar">
-            <div class="primary-logo" title="iLumina">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                    <circle cx="12" cy="12" r="10" stroke="url(#logoGrad2)" stroke-width="2" />
-                    <circle cx="12" cy="12" r="4" fill="url(#logoGrad2)" />
-                    <defs>
-                        <linearGradient id="logoGrad2" x1="2" y1="2" x2="22" y2="22">
-                            <stop stop-color="#6C5CE7" />
-                            <stop offset="1" stop-color="#A29BFE" />
-                        </linearGradient>
-                    </defs>
-                </svg>
-            </div>
-            <div class="mode-switchers">
-                <button class="mode-btn active" id="mode-chat-btn" onclick="switchMode('chat')" title="Conversational Chat">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-                </button>
-                <button class="mode-btn" id="mode-web-btn" onclick="switchMode('web')" title="Web Automation (Playwright)">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-                </button>
-                <button class="mode-btn" id="mode-documents-btn" onclick="switchMode('documents')" title="Documents & Knowledge (OneDrive, Local)">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
-                </button>
-            </div>
-        </nav>
-
-        <!-- Secondary Sidebar (Contextual) -->
-        <aside id="secondary-sidebar" class="secondary-sidebar">
-            <div class="sidebar-header">
-                <span class="logo-text" id="sidebar-title">Chat</span>
-            </div>
-
-            <button id="new-chat-btn" class="new-chat-btn" onclick="newSession()">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-                </svg>
-                New Chat
-            </button>
-
-            <!-- Shared Chat History for Current Mode -->
-            <div class="sidebar-section">
-                <div class="sidebar-section-title">Previous Chats</div>
-                <div id="chats-list" class="tools-list">
-                    <div class="tool-item loading">Loading chats...</div>
-                </div>
-            </div>
-
-            <!-- Mode Sections -->
-            <div id="section-chat" class="mode-section active">
-                <!-- Chat mode has no specific tools, it just relies on the shared chat history -->
-            </div>
-
-            <div id="section-web" class="mode-section" style="display: none;">
-                <div class="sidebar-section">
-                    <div class="sidebar-section-title">Playwright Status</div>
-                    <div class="status-indicators">
-                        <div class="status-item" id="status-playwright">
-                            <div class="status-dot" id="playwright-dot"></div>
-                            <span>Playwright Engine</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="sidebar-section">
-                    <details open>
-                        <summary class="sidebar-section-title" style="cursor: pointer; user-select: none;">Web Tools 🔽</summary>
-                        <div id="web-tools-list" class="tools-list" style="margin-top: 10px;">
-                            <div class="tool-item loading">Loading...</div>
-                        </div>
-                    </details>
-                </div>
-            </div>
-
-            <div id="section-documents" class="mode-section" style="display: none;">
-                <div class="sidebar-section">
-                    <div class="sidebar-section-title">Knowledge Base Status</div>
-                    <div class="status-indicators">
-                        <div class="status-item">
-                            <span class="status-dot chroma-online"></span>
-                            ChromaDB Connected
-                        </div>
-                        <div class="status-item">
-                            <span class="status-dot ms-online"></span>
-                            OneDrive Connected
-                        </div>
-                    </div>
-                </div>
-                <div class="sidebar-section" style="flex: 1; overflow-y: auto;">
-                    <div class="sidebar-section-title">Synced Documents</div>
-                    
-                    <div class="document-source-accordion" style="margin-bottom: 8px;">
-                        <div class="accordion-header" style="cursor: pointer; padding: 5px 0; font-weight: 500; display: flex; align-items: center; gap: 6px;" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
-                            <span>☁️</span> OneDrive
-                        </div>
-                        <div id="onedrive-tree-container" class="tree-container" style="display: block; margin-left: 10px; padding-left: 5px; border-left: 1px solid var(--border-subtle);">
-                            <div class="tree-loading">Loading OneDrive hierarchy...</div>
-                        </div>
-                    </div>
-
-                    <div class="document-source-accordion" style="margin-bottom: 8px;">
-                        <div class="accordion-header" style="cursor: pointer; padding: 5px 0; font-weight: 500; display: flex; align-items: center; gap: 6px;" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
-                            <span>📊</span> Google Drive
-                        </div>
-                        <div id="gdrive-tree-container" class="tree-container" style="display: block; margin-left: 10px; padding-left: 5px; border-left: 1px solid var(--border-subtle);">
-                            <div class="tree-loading">Loading Google Drive hierarchy...</div>
-                        </div>
-                    </div>
-
-                    <div class="document-source-accordion" style="margin-bottom: 8px;">
-                        <div class="accordion-header" style="cursor: pointer; padding: 5px 0; font-weight: 500; display: flex; align-items: center; gap: 6px;" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
-                            <span>💻</span> Local Files
-                        </div>
-                        <div id="local-tree-container" class="tree-container" style="display: block; margin-left: 10px; padding-left: 5px; border-left: 1px solid var(--border-subtle);">
-                            <div class="tree-loading">Loading Local hierarchy...</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+    <div class="chatgpt-app">
+        
+        <!-- SIDEBAR (ChatGPT Style) -->
+        <aside class="chatgpt-sidebar" id="sidebar">
             
-            <div class="sidebar-section" style="margin-top: auto; border-top: 1px solid var(--border-subtle); padding-top: 12px;">
-                <div class="sidebar-section-title">Backend Status</div>
-                <div class="status-indicators">
-                    <div class="status-item" id="status-groq">
-                        <div class="status-dot" id="groq-dot"></div>
-                        <span>LLM Ready</span>
+            <!-- Sidebar Header -->
+            <div class="sidebar-header">
+                <div class="brand-title">
+                    <span class="brand-name">iLumina</span>
+                </div>
+                <div class="sidebar-header-actions">
+                    <button class="header-icon-btn" id="search-history-btn" title="Search chats">
+                        <i class="ph ph-magnifying-glass"></i>
+                    </button>
+                    <button class="header-icon-btn" id="toggle-sidebar" title="Toggle sidebar">
+                        <i class="ph ph-sidebar-simple" id="toggle-sidebar-icon"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- New Chat Button (Universal across modes) -->
+            <div class="sidebar-action-container">
+                <button class="new-chat-pill-btn" id="new-chat-btn">
+                    <i class="ph ph-note-pencil"></i>
+                    <span>New chat</span>
+                </button>
+
+                <!-- Knowledge Base Specific Action: Choose Documents -->
+                <div class="kb-doc-action hidden" id="kb-doc-action-container">
+                    <button class="choose-docs-btn" id="sidebar-choose-docs-btn">
+                        <i class="ph ph-files"></i>
+                        <span id="sidebar-choose-docs-label">Choose documents</span>
+                        <span class="badge hidden" id="sidebar-docs-count-badge">0</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Primary Navigation Items -->
+            <nav class="sidebar-nav">
+                <ul class="nav-menu">
+                    <!-- General Chat Mode -->
+                    <li class="nav-menu-item active" data-mode="chat" id="nav-general-chat">
+                        <i class="ph ph-chat-circle-dots"></i>
+                        <span>General Chat</span>
+                    </li>
+
+                    <!-- Web MCP (in place of Library) -->
+                    <li class="nav-menu-item" data-mode="mcp" id="nav-web-mcp">
+                        <i class="ph ph-books"></i>
+                        <span>Web MCP</span>
+                    </li>
+
+                    <!-- Knowledge base (in place of Projects) -->
+                    <li class="nav-menu-item" data-mode="documents" id="nav-knowledge-base">
+                        <i class="ph ph-folder-simple"></i>
+                        <span>Knowledge base</span>
+                    </li>
+
+                    <!-- Pending Tasks (in place of Scheduled) -->
+                    <li class="nav-menu-item" data-action="pending-tasks" id="nav-pending-tasks">
+                        <i class="ph ph-clock-countdown"></i>
+                        <span>Pending Tasks</span>
+                        <span class="pending-badge hidden" id="pending-count-badge">0</span>
+                    </li>
+
+                    <!-- Integrations (in place of Plugins) -->
+                    <li class="nav-menu-item" data-action="integrations" id="nav-integrations">
+                        <i class="ph ph-at"></i>
+                        <span>Integrations</span>
+                    </li>
+
+                    <!-- Calendar (in place of Codex) -->
+                    <li class="nav-menu-item" data-action="calendar" id="nav-calendar">
+                        <i class="ph ph-calendar-blank"></i>
+                        <span>Calendar</span>
+                    </li>
+                </ul>
+            </nav>
+
+            <!-- Mode-Filtered Chat History (Recents) -->
+            <div class="sidebar-recents-section">
+                <div class="recents-header">
+                    <span>Recents</span>
+                    <span class="mode-tag" id="current-mode-tag">Chat</span>
+                </div>
+                <div class="search-bar-inline hidden" id="chat-search-container">
+                    <input type="text" id="chat-search-input" placeholder="Search sessions...">
+                </div>
+                <ul class="recents-list" id="session-list">
+                    <!-- Populated dynamically via JS -->
+                </ul>
+            </div>
+
+            <!-- User Profile (Bottom) -->
+            <div class="sidebar-footer">
+                <div class="user-profile-card" id="user-profile-btn">
+                    <div class="user-avatar-badge">VB</div>
+                    <div class="user-info">
+                        <div class="user-name">Vaibhav Bansal</div>
+                        <div class="user-plan">Go</div>
                     </div>
-                    <div class="status-item" id="status-mcp">
-                        <div class="status-dot" id="mcp-dot"></div>
-                        <span>MCP Manager</span>
+                    <div class="user-profile-action">
+                        <i class="ph ph-dots-three"></i>
                     </div>
                 </div>
             </div>
+
         </aside>
 
-        <!-- Main Content -->
-        <main class="main-content">
-            <!-- Header -->
-            <header class="chat-header">
-                <button class="menu-toggle" onclick="toggleSidebar()">
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.5"
-                            stroke-linecap="round" />
-                    </svg>
-                </button>
-                <div class="header-info">
-                    <h1>iLumina Chat</h1>
-                    <span class="header-subtitle">Multi-Cloud AI Assistant</span>
+        <!-- MAIN VIEWPORT -->
+        <main class="chatgpt-main">
+            
+            <!-- Top App Bar -->
+            <header class="top-nav-bar">
+                
+                <!-- Left: Mobile / Closed Sidebar Toggle -->
+                <div class="top-left-controls">
+                    <button class="top-icon-btn hidden" id="top-open-sidebar-btn" title="Open sidebar">
+                        <i class="ph ph-sidebar-simple"></i>
+                    </button>
+                    <button class="top-icon-btn hidden" id="top-new-chat-btn" title="New chat">
+                        <i class="ph ph-note-pencil"></i>
+                    </button>
                 </div>
-                <div class="header-actions">
-                    <div class="model-selector-wrapper">
-                        <select id="model-selector" class="model-selector" onchange="updateProviderStatus()">
-                            <optgroup label="Groq Models">
-                                <option value="groq|llama-3.3-70b-versatile">Llama 3.3 70B (Groq)</option>
-                                <option value="groq|llama-3.1-8b-instant">Llama 3.1 8B (Groq)</option>
-                                <option value="groq|mixtral-8x7b-32768">Mixtral 8x7B (Groq)</option>
+
+                <!-- Center: Pill Toggle & Model Dropdown -->
+                <div class="top-center-controls">
+                    <!-- Segmented Mode Pills -->
+                    <div class="pill-segmented-control">
+                        <button class="segment-btn active" data-segment="chat" id="segment-chat">Chat</button>
+                        <button class="segment-btn" data-segment="work" id="segment-work">+ Work</button>
+                    </div>
+
+                    <!-- Clean Model Dropdown -->
+                    <div class="model-picker-pill">
+                        <i class="ph ph-sparkle"></i>
+                        <select id="llm-model-select" class="model-select-input">
+                            <optgroup label="Gemini High Speed">
+                                <option value="gemini:gemini-3.8-flash">Gemini 3.8 Flash</option>
+                                <option value="gemini:gemini-3.7-flash">Gemini 3.7 Flash</option>
+                                <option value="gemini:gemini-3.6-flash">Gemini 3.6 Flash</option>
+                                <option value="gemini:gemini-3.5-flash-lite">Gemini 3.5 Flash Lite</option>
                             </optgroup>
-                            <optgroup label="Google Gemini Models">
-                                <option value="gemini|gemini-2.5-flash">Gemini 2.5 Flash</option>
+                            <optgroup label="NVIDIA NIM">
+                                <option value="nvidia:nvidia/nemotron-3.5-lightning-30b-a3b" selected>Nemotron 3.5 Lightning 30B</option>
                             </optgroup>
-                            <optgroup label="NVIDIA API Models">
-                                <option value="nvidia|meta/llama-3.3-70b-instruct" selected>Llama 3.3 70B (NVIDIA)</option>
+                            <optgroup label="Groq Open Source">
+                                <option value="groq:qwen/qwen3.6-27b">Qwen 3.6 27B</option>
+                                <option value="groq:openai-gpt-oss-120b">OpenAI GPT-OSS 120B</option>
+                                <option value="groq:openai-gpt-oss-20b">OpenAI GPT-OSS 20B</option>
                             </optgroup>
                         </select>
+                        <i class="ph ph-caret-down select-arrow"></i>
                     </div>
+                </div>
+
+                <!-- Right: Header actions -->
+                <div class="top-right-controls">
+                    <button class="top-icon-btn" id="reload-session-btn" title="Reset view">
+                        <i class="ph ph-arrows-clockwise"></i>
+                    </button>
                 </div>
             </header>
 
-            <!-- Chat Messages -->
-            <div id="chat-container" class="chat-container">
-                <div id="messages" class="messages">
-                    <!-- Welcome message -->
-                    <div class="welcome-screen" id="welcome-screen">
-                        <div class="welcome-icon">
-                            <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-                                <circle cx="24" cy="24" r="22" stroke="url(#welcomeGrad)" stroke-width="2"
-                                    opacity="0.3" />
-                                <circle cx="24" cy="24" r="16" stroke="url(#welcomeGrad)" stroke-width="2"
-                                    opacity="0.6" />
-                                <circle cx="24" cy="24" r="8" fill="url(#welcomeGrad)" />
-                                <defs>
-                                    <linearGradient id="welcomeGrad" x1="2" y1="2" x2="46" y2="46">
-                                        <stop stop-color="#6C5CE7" />
-                                        <stop offset="1" stop-color="#A29BFE" />
-                                    </linearGradient>
-                                </defs>
-                            </svg>
-                        </div>
-                        <h2>Welcome to iLumina</h2>
-                        <p>I can browse the web, take screenshots, and interact with pages for you.</p>
-                        <div class="suggestions">
-                            <button class="suggestion-chip"
-                                onclick="sendSuggestion('Navigate to https://news.ycombinator.com and summarize what you see')">
-                                📰 Summarize Hacker News
-                            </button>
-                            <button class="suggestion-chip"
-                                onclick="sendSuggestion('Go to https://example.com and take a screenshot')">
-                                📸 Screenshot example.com
-                            </button>
-                            <button class="suggestion-chip"
-                                onclick="sendSuggestion('Navigate to https://github.com and tell me what\\'s trending')">
-                                🐙 GitHub Trending
-                            </button>
-                        </div>
+            <!-- CHAT CANVAS -->
+            <div class="chat-canvas">
+                
+                <!-- Center Greeting (Visible on Empty/New Chat) -->
+                <div class="greeting-container" id="greeting-container">
+                    <h1 class="greeting-text">Good to see you, Vaibhav.</h1>
+                </div>
+
+                <!-- Messages Stream Container -->
+                <div class="messages-viewport hidden" id="messages-viewport">
+                    <div class="messages-list" id="chat-messages-list">
+                        <!-- Message blocks populated here -->
                     </div>
                 </div>
+
+                <!-- Active Context Indicator (Knowledge Base) -->
+                <div class="active-context-banner hidden" id="active-context-banner">
+                    <div class="context-pill">
+                        <i class="ph ph-files"></i>
+                        <span id="active-context-label">Searching across all embeddings</span>
+                        <button class="clear-context-chip-btn" id="banner-change-docs-btn" title="Change documents">Change</button>
+                        <button class="clear-context-btn" id="banner-clear-context-btn" title="Clear document restriction">
+                            <i class="ph ph-x"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Floating Prompt Input Bar (ChatGPT Style) -->
+                <div class="prompt-bar-container">
+                    <form id="chatgpt-prompt-form" class="prompt-bar-box">
+                        
+                        <!-- Left: Attachment / Context Button -->
+                        <button type="button" class="prompt-action-btn attach-btn" id="prompt-attach-btn" title="Add files or context">
+                            <i class="ph ph-plus"></i>
+                        </button>
+                        <input type="file" id="prompt-file-input" class="hidden" accept="image/*,application/pdf,text/*">
+
+                        <!-- Center: Textarea -->
+                        <div class="prompt-input-wrapper">
+                            <textarea id="prompt-textarea" rows="1" placeholder="Ask anything" autofocus></textarea>
+                        </div>
+
+                        <!-- Right Actions Cluster -->
+                        <div class="prompt-right-cluster">
+                            <!-- Think Button (Chip) -->
+                            <button type="button" class="think-chip-btn" id="think-toggle-btn" title="Toggle reasoning model">
+                                <i class="ph ph-brain"></i>
+                                <span>Think</span>
+                            </button>
+
+                            <!-- Microphone Icon -->
+                            <button type="button" class="prompt-action-btn mic-btn" id="speech-mic-btn" title="Voice dictation">
+                                <i class="ph ph-microphone"></i>
+                            </button>
+
+                            <!-- Voice Mode Blue Waveform Button -->
+                            <button type="button" class="voice-waveform-btn" id="voice-mode-btn" title="Start voice mode">
+                                <i class="ph ph-wave-sine"></i>
+                            </button>
+
+                            <!-- Send Button (Visible when text entered) -->
+                            <button type="submit" class="send-submit-btn hidden" id="prompt-send-btn" title="Send message">
+                                <i class="ph ph-arrow-up"></i>
+                            </button>
+                        </div>
+
+                    </form>
+
+                    <div class="prompt-footer-disclaimer">
+                        iLumina can make mistakes. Verify important context and integration actions.
+                    </div>
+                </div>
+
             </div>
 
-            <!-- Input Area -->
-            <div class="input-area">
-                <!-- Image preview -->
-                <div id="image-preview" class="image-preview">
-                    <img id="preview-img" src="" alt="Preview">
-                    <button id="remove-image" class="remove-image-btn" onclick="removeImage()">
-                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                            <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" stroke-width="1.5"
-                                stroke-linecap="round" />
-                        </svg>
-                    </button>
-                </div>
-                <div class="input-wrapper">
-                    <!-- Image upload button -->
-                    <input type="file" id="image-input" accept="image/*" style="display:none"
-                        onchange="handleImageSelect(this)">
-                    <button class="attach-btn" onclick="triggerImageUpload()" title="Upload image (or paste/drag)">
-                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                            <path
-                                d="M15.5 9.5l-6.4 6.4a4.12 4.12 0 01-5.83-5.83l6.4-6.4a2.75 2.75 0 013.89 3.89l-6.4 6.4a1.38 1.38 0 01-1.95-1.95l5.9-5.9"
-                                stroke="currentColor" stroke-width="1.3" stroke-linecap="round"
-                                stroke-linejoin="round" />
-                        </svg>
-                    </button>
-                    <!-- Voice Input (STT) -->
-                    <button id="voice-btn" class="voice-btn" onclick="toggleVoiceInput()" title="Hold to speak">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                            <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                            <path d="M19 10v2a7 7 0 01-14 0v-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                            <line x1="12" y1="19" x2="12" y2="23" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-                            <line x1="8" y1="23" x2="16" y2="23" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-                        </svg>
-                    </button>
-                    <!-- TTS Toggle -->
-                    <button id="tts-btn" class="tts-btn" onclick="toggleTTS()" title="Toggle voice responses">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-                            <path id="tts-waves" d="M15.54 8.46a5 5 0 010 7.07M19.07 4.93a10 10 0 010 14.14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                    </button>
-                    <textarea id="message-input"
-                        placeholder="Ask me anything, paste an image, or drag & drop a screenshot..." rows="1"
-                        onkeydown="handleKeyDown(event)" oninput="autoResize(this)"></textarea>
-                    <button id="send-btn" class="send-btn" onclick="sendMessage()" disabled>
-                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                            <path d="M16 2L7 11M16 2L11 16L7 11M16 2L2 7L7 11" stroke="currentColor" stroke-width="1.5"
-                                stroke-linecap="round" stroke-linejoin="round" />
-                        </svg>
-                    </button>
-                </div>
-                <!-- Voice listening indicator -->
-                <div id="voice-indicator" class="voice-indicator">
-                    <div class="bars">
-                        <div class="bar"></div>
-                        <div class="bar"></div>
-                        <div class="bar"></div>
-                        <div class="bar"></div>
-                    </div>
-                    <span id="voice-status">Listening...</span>
-                </div>
-                <div class="input-footer">
-                    <span>Powered by Groq &bull; Playwright MCP &bull; 🎙️ Voice &bull; 📎 Paste or drag images</span>
-                </div>
-            </div>
         </main>
+
+        <!-- ======================================================= -->
+        <!-- MODALS & OVERLAYS -->
+        <!-- ======================================================= -->
+
+        <!-- 1. CHOOSE DOCUMENTS MODAL (Knowledge Base) -->
+        <div class="modal-backdrop hidden" id="choose-docs-modal">
+            <div class="modal-window choose-docs-modal-window">
+                
+                <div class="modal-header">
+                    <div class="modal-title-group">
+                        <h3>Choose Documents</h3>
+                        <p>Select specific documents to restrict AI context, or uncheck all to query entire knowledge base.</p>
+                    </div>
+                    <button class="modal-close-btn" id="close-docs-modal-btn">
+                        <i class="ph ph-x"></i>
+                    </button>
+                </div>
+
+                <div class="modal-toolbar">
+                    <div class="search-box">
+                        <i class="ph ph-magnifying-glass"></i>
+                        <input type="text" id="doc-modal-search" placeholder="Search documents...">
+                    </div>
+                    <div class="filter-controls">
+                        <select id="doc-source-filter" class="select-chip">
+                            <option value="all">All Sources</option>
+                            <option value="onedrive">OneDrive</option>
+                            <option value="gdrive">Google Drive</option>
+                            <option value="local">Local Files</option>
+                            <option value="github">GitHub</option>
+                        </select>
+                        <select id="doc-sort-filter" class="select-chip">
+                            <option value="name">Sort by Name</option>
+                            <option value="date">Sort by Date</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="docs-selection-container" id="docs-modal-list">
+                    <div class="loader-spinner"></div>
+                </div>
+
+                <div class="modal-footer">
+                    <div class="selection-status" id="selection-status-text">
+                        0 documents selected (Global embeddings active)
+                    </div>
+                    <div class="modal-footer-actions">
+                        <button class="btn secondary" id="clear-all-docs-btn">Reset to All</button>
+                        <button class="btn primary" id="apply-selected-docs-btn">Apply Context</button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- 2. PENDING TASKS DRAWER/MODAL -->
+        <div class="modal-backdrop hidden" id="pending-tasks-modal">
+            <div class="modal-window side-drawer-window">
+                <div class="modal-header">
+                    <div class="modal-title-group">
+                        <h3>Pending Tasks</h3>
+                        <p>Autonomous actions queued for user authorization.</p>
+                    </div>
+                    <button class="modal-close-btn" id="close-tasks-modal-btn">
+                        <i class="ph ph-x"></i>
+                    </button>
+                </div>
+                <div class="drawer-content" id="pending-tasks-list">
+                    <!-- Rendered via JS -->
+                    <p class="empty-state">No pending actions.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. INTEGRATIONS MODAL -->
+        <div class="modal-backdrop hidden" id="integrations-modal">
+            <div class="modal-window">
+                <div class="modal-header">
+                    <div class="modal-title-group">
+                        <h3>Integrations</h3>
+                        <p>Status of connected MCP tools, storage providers, and APIs.</p>
+                    </div>
+                    <button class="modal-close-btn" id="close-integrations-modal-btn">
+                        <i class="ph ph-x"></i>
+                    </button>
+                </div>
+                <div class="integrations-list-grid" id="integrations-modal-list">
+                    <!-- Rendered via JS -->
+                </div>
+            </div>
+        </div>
+
+        <!-- 4. CALENDAR MODAL -->
+        <div class="modal-backdrop hidden" id="calendar-modal">
+            <div class="modal-window">
+                <div class="modal-header">
+                    <div class="modal-title-group">
+                        <h3>Calendar Schedule</h3>
+                        <p>Upcoming Google Calendar events synchronized with iLumina.</p>
+                    </div>
+                    <button class="modal-close-btn" id="close-calendar-modal-btn">
+                        <i class="ph ph-x"></i>
+                    </button>
+                </div>
+                <div class="calendar-events-list" id="calendar-modal-list">
+                    <!-- Rendered via JS -->
+                </div>
+            </div>
+        </div>
+
     </div>
 
-    <!-- Lightbox for images -->
-    <div id="lightbox" class="lightbox" onclick="closeLightbox()">
-        <img id="lightbox-img" src="" alt="Screenshot">
-    </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="/static/app.js"></script>
+    <!-- Application Scripts -->
+    <script type="module" src="/static/js/main.js"></script>
 </body>
-
 </html>

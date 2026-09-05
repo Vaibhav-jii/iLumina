@@ -1,10 +1,11 @@
 import os
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-# The scopes required for Google Sheets and Drive
+# The scopes required for Google Sheets, Drive, and Calendar
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/calendar"
 ]
 
 def authenticate_google():

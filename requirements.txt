@@ -3,6 +3,7 @@ fastapi
 uvicorn[standard]
 httpx
 python-dotenv
+python-multipart
 pillow
 groq
 google-genai
@@ -11,3 +12,8 @@ openai
 chromadb
 PyPDF2
 python-docx
+fpdf2
+langgraph
+mcp
+google-api-python-client
+google-auth

@@ -90,6 +90,16 @@ def init_context_db():
             )
         ''')
         
+        # --- Sync Engine Tracking ---
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS synced_files (
+                file_id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                last_modified TEXT NOT NULL,
+                synced_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
         conn.commit()
 
 
@@ -288,3 +298,30 @@ def delete_memory(memory_id: str):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute('DELETE FROM user_memory WHERE id = ?', (memory_id,))
         conn.commit()
+
+
+# ==========================================
+# SYNC STATUS CRUD
+# ==========================================
+
+def get_synced_file(file_id: str) -> Optional[dict]:
+    """Retrieve the sync status for a file."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute('SELECT * FROM synced_files WHERE file_id = ?', (file_id,)).fetchone()
+        if row:
+            return dict(row)
+    return None
+
+def upsert_synced_file(file_id: str, source: str, last_modified: str):
+    """Insert or update a synced file record."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute('''
+            INSERT INTO synced_files (file_id, source, last_modified, synced_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(file_id) DO UPDATE SET
+                last_modified=excluded.last_modified,
+                synced_at=CURRENT_TIMESTAMP
+        ''', (file_id, source, last_modified))
+        conn.commit()
+

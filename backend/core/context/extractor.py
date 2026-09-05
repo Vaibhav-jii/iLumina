@@ -65,7 +65,7 @@ async def extract_context_from_text(text: str, document_id: str, filename: str) 
         # Use a high-quality model available on NVIDIA for extraction
         response = await call_llm(
             provider="nvidia",
-            model="meta/llama-3.1-70b-instruct",
+            model="nvidia/nemotron-3.5-lightning-30b-a3b",
             messages=messages,
             temperature=0.1
         )

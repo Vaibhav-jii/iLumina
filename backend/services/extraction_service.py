@@ -6,8 +6,10 @@ from backend.core.context.extractor import extract_context_from_text
 from backend.db.context_store import (
     clear_document_context, 
     insert_extracted_entity, 
-    insert_extracted_event
+    insert_extracted_event,
+    create_action
 )
+from backend.schemas.actions import ProposedActionCreate
 
 def run_extraction_for_document(document_id: str) -> Dict[str, int]:
     """
@@ -114,10 +116,31 @@ async def async_run_extraction_for_document(document_id: str) -> Dict[str, int]:
         insert_extracted_entity(entity)
         entities_count += 1
         
-    # 4. Insert new events
+    # 4. Insert new events and auto-propose calendar actions
     events_count = 0
     for event in extracted_data.get("events", []):
         insert_extracted_event(event)
+        
+        # Automatically propose a calendar action
+        try:
+            action = ProposedActionCreate(
+                action_type="calendar.create",
+                provider="google_calendar",
+                title=f"Schedule: {event.get('title', 'Event')}",
+                description=f"Auto-extracted from {filename}:\n\n{event.get('description', '')}\n\nEvidence: {event.get('evidence', '')}",
+                payload={
+                    "title": event.get("title", "Extracted Event"),
+                    "description": event.get("description", ""),
+                    "start_date": event.get("start_date"),
+                    "end_date": event.get("end_date"),
+                    "location": event.get("location", "")
+                },
+                reason=f"Found a '{event.get('event_type')}' event in your synchronized file '{filename}'. Would you like to add it to your calendar?"
+            )
+            create_action(action)
+        except Exception as e:
+            print(f"Failed to create pending action for event: {e}")
+            
         events_count += 1
         
     return {"entities": entities_count, "events": events_count}

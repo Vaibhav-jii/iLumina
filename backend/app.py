@@ -41,6 +41,18 @@ async def lifespan(app: FastAPI):
             await doc_session.initialize()
             MCP_SESSIONS["documents"] = {"session": doc_session}
 
+            # Playwright MCP Server via SSE
+            try:
+                from fastmcp import Client as FastMCPClient
+                from backend.config import FASTMCP_URL
+                # Set a very long timeout (24 hours) to prevent HTTPX ReadTimeout on idle SSE connections
+                playwright_client = FastMCPClient(FASTMCP_URL, timeout=86400.0)
+                await stack.enter_async_context(playwright_client)
+                MCP_SESSIONS["playwright"] = {"session": playwright_client}
+                print("✅ Playwright MCP Session Initialized")
+            except Exception as e:
+                print(f"❌ Failed to initialize Playwright MCP: {e}")
+
             # Filesystem MCP server
             fs_params = StdioServerParameters(
                 command="npx",
@@ -60,6 +72,12 @@ async def lifespan(app: FastAPI):
             ms_session = await stack.enter_async_context(ClientSession(ms_read, ms_write))
             await ms_session.initialize()
             MCP_SESSIONS["ms365"] = {"session": ms_session}
+
+            # Start background sync loops
+            import asyncio
+            from backend.services.sync_service import sync_onedrive_loop, sync_gdrive_loop
+            asyncio.create_task(sync_onedrive_loop(ms_session))
+            asyncio.create_task(sync_gdrive_loop())
 
             # GitHub MCP server
             github_token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")

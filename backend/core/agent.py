@@ -47,14 +47,14 @@ Respond in clean Markdown. If the user needs web browsing, suggest Web MCP mode.
 
     "web": """You are iLumina — an MCP-powered assistant with browser automation and web search.
 
-Tools: browser navigation, clicking, typing, screenshots, page snapshots, DuckDuckGo search, content extraction.
+Tools: `browser_navigate`, `browser_click`, `browser_type`, `browser_take_screenshot`, `browser_snapshot`, `web_search`.
 
 Rules:
 1. Determine intent → pick minimum tools → execute → verify → answer.
 2. Never assume — always verify via tool output.
-3. For web pages: navigate → snapshot → act → verify.
-4. For YouTube: use `navigate_and_summarize` to read page text (title, description, comments). Do NOT play video.
-5. For search: use `web_search` for broad queries, `navigate_and_summarize` for specific URLs.
+3. For web pages: use `browser_navigate` to load the page. The system will automatically return the DOM snapshot.
+4. To interact: use `browser_click` to click elements, and `browser_type` to fill in forms (emails, passwords, etc) using the CSS selectors found in the DOM snapshot.
+5. For search: use `web_search` for broad queries, and `browser_navigate` for specific URLs.
 6. Format responses in Markdown.""",
 
     "documents": """You are iLumina — a knowledge-powered assistant with access to an embeddings vector database.
@@ -222,13 +222,13 @@ def _build_nodes(event_queue: asyncio.Queue | None = None):
         last_message = messages[-1]
         tool_calls = last_message.get("tool_calls", [])
 
-        tasks = []
         tool_names = []
-        tool_start_times = {}
+        new_screenshots = []
 
         for tc in tool_calls:
             tool_name = tc["function"]["name"]
             tool_names.append(tool_name)
+            tool_call_id = tc["id"]
             try:
                 tool_args = json.loads(tc["function"]["arguments"])
             except json.JSONDecodeError:
@@ -236,72 +236,59 @@ def _build_nodes(event_queue: asyncio.Queue | None = None):
 
             print(f"🔧 LLM executing tool: {tool_name}({tool_args})")
             await _emit({"type": "tool_start", "tool": tool_name})
-            tool_start_times[tool_name] = time.time()
+            start_time = time.time()
             
-            if tool_name == "propose_calendar_event":
-                from backend.schemas.actions import ProposedActionCreate
-                from backend.db.context_store import create_action
-                
-                action = ProposedActionCreate(
-                    action_type="calendar.create",
-                    provider="google_calendar",
-                    title=tool_args.get("title", "New Event"),
-                    description=tool_args.get("description", ""),
-                    payload=tool_args,
-                    reason=tool_args.get("reason", "Requested by user"),
-                    session_id=state["session_id"]
-                )
-                action_id = create_action(action)
-                
-                async def _dummy_return():
-                    return f"Successfully proposed calendar action to user. Waiting for human approval. Action ID: {action_id}"
-                
-                tasks.append(_dummy_return())
-            elif tool_name == "store_memory":
-                from backend.db.context_store import create_memory
-                
-                content = tool_args.get("content", "")
-                category = tool_args.get("category", "general")
-                memory_id = create_memory(content, category)
-                
-                async def _dummy_return_memory():
-                    return f"Successfully saved memory (ID: {memory_id}). I will remember this for future conversations."
-                
-                tasks.append(_dummy_return_memory())
-            elif tool_name == "propose_action":
-                from backend.schemas.actions import ProposedActionCreate
-                from backend.db.context_store import create_action
-                
-                payload = {
-                    "tool_name": tool_args.get("tool_name"),
-                    "tool_args": tool_args.get("tool_args", {})
-                }
-                
-                action = ProposedActionCreate(
-                    action_type="mcp",
-                    provider="mcp",
-                    title=tool_args.get("title", "New Action"),
-                    description=tool_args.get("description", ""),
-                    payload=payload,
-                    reason=tool_args.get("reason", "Requested by user"),
-                    session_id=state["session_id"]
-                )
-                action_id = create_action(action)
-                
-                async def _dummy_return_action():
-                    return f"Successfully proposed action ({tool_args.get('tool_name')}) to user. Waiting for human approval. Action ID: {action_id}"
-                
-                tasks.append(_dummy_return_action())
-            else:
-                tasks.append(execute_mcp_tool(tool_name, tool_args))
+            try:
+                if tool_name == "propose_calendar_event":
+                    from backend.schemas.actions import ProposedActionCreate
+                    from backend.db.context_store import create_action
+                    
+                    action = ProposedActionCreate(
+                        action_type="calendar.create",
+                        provider="google_calendar",
+                        title=tool_args.get("title", "New Event"),
+                        description=tool_args.get("description", ""),
+                        payload=tool_args,
+                        reason=tool_args.get("reason", "Requested by user"),
+                        session_id=state["session_id"]
+                    )
+                    action_id = create_action(action)
+                    tool_result = f"Successfully proposed calendar action to user. Waiting for human approval. Action ID: {action_id}"
+                    
+                elif tool_name == "store_memory":
+                    from backend.db.context_store import create_memory
+                    
+                    content = tool_args.get("content", "")
+                    category = tool_args.get("category", "general")
+                    memory_id = create_memory(content, category)
+                    tool_result = f"Successfully saved memory (ID: {memory_id}). I will remember this for future conversations."
+                    
+                elif tool_name == "propose_action":
+                    from backend.schemas.actions import ProposedActionCreate
+                    from backend.db.context_store import create_action
+                    
+                    payload = {
+                        "tool_name": tool_args.get("tool_name"),
+                        "tool_args": tool_args.get("tool_args", {})
+                    }
+                    action = ProposedActionCreate(
+                        action_type="mcp",
+                        provider="mcp",
+                        title=tool_args.get("title", "New Action"),
+                        description=tool_args.get("description", ""),
+                        payload=payload,
+                        reason=tool_args.get("reason", "Requested by user"),
+                        session_id=state["session_id"]
+                    )
+                    action_id = create_action(action)
+                    tool_result = f"Successfully proposed action ({tool_args.get('tool_name')}) to user. Waiting for human approval. Action ID: {action_id}"
+                    
+                else:
+                    tool_result = await execute_mcp_tool(tool_name, tool_args)
+            except Exception as e:
+                tool_result = e
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        new_screenshots = []
-        for tc, tool_result in zip(tool_calls, results):
-            tool_name = tc["function"]["name"]
-            tool_call_id = tc["id"]
-            duration_ms = int((time.time() - tool_start_times.get(tool_name, time.time())) * 1000)
+            duration_ms = int((time.time() - start_time) * 1000)
 
             if isinstance(tool_result, Exception):
                 tool_result_str = json.dumps({"error": str(tool_result)})

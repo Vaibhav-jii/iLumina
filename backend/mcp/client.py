@@ -45,15 +45,16 @@ async def fetch_tools_as_openai_schema(mode: str = "web") -> list[dict]:
 
     if mode == "web" or mode == "mcp":
         # 1. Playwright and Web tools from FastMCP (Highest priority for browsing/screenshots)
-        try:
-            async with MCPClient(FASTMCP_URL) as client:
-                mcp_tools = await client.list_tools()
+        if "playwright" in MCP_SESSIONS:
+            try:
+                session = MCP_SESSIONS["playwright"]["session"]
+                mcp_tools = await session.list_tools()
                 for t in mcp_tools:
                     if t.name in ["embed_document", "query_documents", "list_embedded_documents"]:
                         if mode == "web": continue
                     try_add_tool(_tool_to_openai(t), t.name, "playwright")
-        except Exception as e:
-            print(f"Failed to fetch FastMCP tools: {e}")
+            except Exception as e:
+                print(f"Failed to fetch FastMCP tools: {e}")
 
         # 2. Stdio MCP tools: Prioritize Filesystem first, then other integrations
         if mode == "mcp":
@@ -151,9 +152,30 @@ async def execute_mcp_tool(tool_name: str, arguments: dict) -> str:
 
     try:
         if session_name == "playwright":
-            async with MCPClient(FASTMCP_URL) as client:
-                result = await client.call_tool(tool_name, cleaned_args)
-                return _parse_tool_result(result)
+            if "playwright" not in MCP_SESSIONS:
+                return json.dumps({"error": "Playwright MCP session not initialized."})
+            
+            client = MCP_SESSIONS["playwright"]["session"]
+            result = await client.call_tool(tool_name, cleaned_args)
+            
+            # Give SPAs and heavy sites 2 seconds to render before returning control
+            if tool_name in ["browser_navigate", "browser_click"]:
+                import asyncio
+                await asyncio.sleep(2.0)
+                
+                # Fetch the fully rendered DOM snapshot after sleeping
+                try:
+                    snapshot_result = await client.call_tool("browser_snapshot", {})
+                    
+                    # Combine the results so the agent knows the navigation succeeded AND gets the populated DOM
+                    parsed_orig = _parse_tool_result(result)
+                    parsed_snap = _parse_tool_result(snapshot_result)
+                    return f"{parsed_orig}\n\n[Delayed Render Snapshot]:\n{parsed_snap}"
+                except Exception as e:
+                    print(f"Error fetching delayed snapshot: {e}")
+                    pass
+                
+            return _parse_tool_result(result)
         else:
             session = MCP_SESSIONS[session_name]["session"]
             result = await session.call_tool(tool_name, cleaned_args)

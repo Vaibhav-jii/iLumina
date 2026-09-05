@@ -4,10 +4,9 @@
 # ============================================
 # Usage: bash start.sh
 #
-# This script starts 3 processes:
+# This script starts:
 # 1. Playwright MCP Server (HTTP on port 9222)
-# 2. FastMCP Proxy Server (HTTP on port 8001)
-# 3. FastAPI Backend (HTTP on port 8000)
+# 2. FastAPI Backend (HTTP on port 8000)
 # ============================================
 
 set -e
@@ -54,8 +53,8 @@ PYTHON=$(command -v python3 || command -v python)
 cleanup() {
     echo ""
     echo -e "${YELLOW}🛑 Shutting down all services...${NC}"
-    kill $PID_PLAYWRIGHT $PID_FASTMCP $PID_FASTAPI $PID_SYNC 2>/dev/null
-    wait $PID_PLAYWRIGHT $PID_FASTMCP $PID_FASTAPI $PID_SYNC 2>/dev/null
+    kill $PID_PLAYWRIGHT $PID_FASTAPI 2>/dev/null
+    wait $PID_PLAYWRIGHT $PID_FASTAPI 2>/dev/null
     echo -e "${GREEN}✅ All services stopped.${NC}"
 }
 trap cleanup EXIT
@@ -67,26 +66,12 @@ PID_PLAYWRIGHT=$!
 sleep 3
 echo -e "${GREEN}  ✅ Playwright MCP running (PID: $PID_PLAYWRIGHT)${NC}"
 
-# 2. Start FastMCP Proxy Server
-echo -e "${BLUE}[2/3]${NC} Starting FastMCP Proxy Server on port 8001..."
-$PYTHON mcp_server.py &
-PID_FASTMCP=$!
-sleep 2
-echo -e "${GREEN}  ✅ FastMCP Proxy running (PID: $PID_FASTMCP)${NC}"
-
-# 3. Start FastAPI Backend
-echo -e "${BLUE}[3/4]${NC} Starting FastAPI Backend on port 8000..."
-$PYTHON langgraph_main.py &
+# 2. Start FastAPI Backend (Context & Action Engine)
+echo -e "${BLUE}[2/2]${NC} Starting FastAPI Backend on port 8000..."
+$PYTHON -m uvicorn backend.app:create_app --factory --host 0.0.0.0 --port 8000 &
 PID_FASTAPI=$!
 sleep 2
 echo -e "${GREEN}  ✅ FastAPI Backend running (PID: $PID_FASTAPI)${NC}"
-
-# 4. Start OneDrive Sync Engine
-echo -e "${BLUE}[4/4]${NC} Starting OneDrive Sync Engine..."
-$PYTHON -u sync_engine.py &
-PID_SYNC=$!
-sleep 1
-echo -e "${GREEN}  ✅ OneDrive Sync Engine running (PID: $PID_SYNC)${NC}"
 
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════╗${NC}"
@@ -94,8 +79,7 @@ echo -e "${GREEN}║       ✅ All Services Running!       ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════╝${NC}"
 echo ""
 echo -e "  🌐 ${BLUE}Frontend:${NC}    http://localhost:8000"
-echo -e "  🤖 ${BLUE}FastAPI:${NC}     http://localhost:8000/api/health"
-echo -e "  📡 ${BLUE}FastMCP:${NC}     http://localhost:8001/mcp"
+echo -e "  🤖 ${BLUE}FastAPI:${NC}     http://localhost:8000/docs"
 echo -e "  🎭 ${BLUE}Playwright:${NC}  http://localhost:9222/mcp"
 echo ""
 echo -e "${YELLOW}Press Ctrl+C to stop all services.${NC}"

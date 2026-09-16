@@ -206,7 +206,15 @@ async def sync_gdrive_loop():
             
             token_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "token.json")
             if os.path.exists(token_path):
-                creds = Credentials.from_authorized_user_file(token_path, ['https://www.googleapis.com/auth/drive.readonly'])
+                creds = Credentials.from_authorized_user_file(token_path)
+                if creds and creds.expired and creds.refresh_token:
+                    from google.auth.transport.requests import Request
+                    try:
+                        creds.refresh(Request())
+                        with open(token_path, "w") as f:
+                            f.write(creds.to_json())
+                    except Exception as refresh_err:
+                        print(f"Error refreshing Google Drive token: {refresh_err}")
                 service = build('drive', 'v3', credentials=creds)
                 
                 # Search for all files owned by user

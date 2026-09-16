@@ -22,8 +22,14 @@ def get_calendar_service():
     if os.path.exists(TOKEN_PATH):
         try:
             creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
-            if creds and creds.valid:
-                return build('calendar', 'v3', credentials=creds)
+            if creds:
+                if creds.expired and creds.refresh_token:
+                    from google.auth.transport.requests import Request
+                    creds.refresh(Request())
+                    with open(TOKEN_PATH, "w") as f:
+                        f.write(creds.to_json())
+                if creds.valid:
+                    return build('calendar', 'v3', credentials=creds)
         except Exception as e:
             print(f"Error loading Google Calendar credentials: {e}")
     return None
@@ -87,20 +93,32 @@ def execute_calendar_create(payload: Dict[str, Any]) -> str:
     try:
         event_body = {
             'summary': payload.get('title', 'New Event'),
-            'location': payload.get('location', ''),
-            'description': payload.get('description', ''),
-            'start': {
-                'dateTime': payload.get('start_date'),
-                'timeZone': payload.get('timezone', 'UTC'),
-            },
-            'end': {
-                'dateTime': payload.get('end_date'),
-                'timeZone': payload.get('timezone', 'UTC'),
-            }
         }
+        if payload.get('location'):
+            event_body['location'] = payload.get('location')
+        if payload.get('description'):
+            event_body['description'] = payload.get('description')
+            
+        start_date = payload.get('start_date')
+        end_date = payload.get('end_date')
         
-        # Remove empty fields
-        event_body = {k: v for k, v in event_body.items() if v}
+        # If no start date was extracted, we cannot create a calendar event
+        if not start_date:
+            raise Exception("Cannot create calendar event: missing start date.")
+            
+        # Default end_date to start_date if missing
+        if not end_date:
+            end_date = start_date
+            
+        def format_date_obj(date_str):
+            if "T" in date_str:
+                return {'dateTime': date_str, 'timeZone': payload.get('timezone', 'UTC')}
+            else:
+                # Full day event format
+                return {'date': date_str[:10]}
+                
+        event_body['start'] = format_date_obj(start_date)
+        event_body['end'] = format_date_obj(end_date)
         
         event = service.events().insert(calendarId='primary', body=event_body).execute()
         return event.get('htmlLink')

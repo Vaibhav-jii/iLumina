@@ -54,7 +54,7 @@ async def fetch_tools_as_openai_schema(mode: str = "web") -> list[dict]:
                         if mode == "web": continue
                     try_add_tool(_tool_to_openai(t), t.name, "playwright")
             except Exception as e:
-                print(f"Failed to fetch FastMCP tools: {e}")
+                print(f"Failed to fetch FastMCP tools: {type(e).__name__}: {e}")
 
         # 2. Stdio MCP tools: Prioritize Filesystem first, then other integrations
         if mode == "mcp":
@@ -181,7 +181,7 @@ async def execute_mcp_tool(tool_name: str, arguments: dict) -> str:
             result = await session.call_tool(tool_name, cleaned_args)
             return _parse_tool_result(result)
     except Exception as e:
-        return json.dumps({"error": f"Tool execution failed: {str(e)}"})
+        return json.dumps({"error": f"Tool execution failed: {type(e).__name__}: {e}"})
 
 
 def _parse_tool_result(result) -> str:

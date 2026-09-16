@@ -126,7 +126,7 @@ export const API = {
     // === ACTIONS (Approvals) ===
     async getPendingActions() {
         try {
-            const res = await fetch(`${API_BASE}/actions`);
+            const res = await fetch(`${API_BASE}/actions/pending`);
             return res.json();
         } catch (e) {
             return [];

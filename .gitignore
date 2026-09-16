@@ -23,8 +23,11 @@ data/
 # Playwright MCP artifacts
 .playwright-mcp/
 
-# Scratch and test files
-test_*.py
+# Scratch and test files (root level only)
+/test_*.py
+/test_*.png
+.coverage
+.pytest_cache/
 
 # Google Cloud Credentials
 credentials.json
@@ -33,3 +36,7 @@ token.json
 
 # Screenshots
 frontend/screenshots/
+
+# Misc
+.DS_Store
+uv.lock

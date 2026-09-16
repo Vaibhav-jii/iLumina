@@ -257,9 +257,22 @@ export const UI = {
         actions.forEach(action => {
             const el = document.createElement('div');
             el.className = 'action-card';
+
+            // Extract date info from payload if available
+            let dateHtml = '';
+            if (action.payload) {
+                const p = typeof action.payload === 'string' ? JSON.parse(action.payload) : action.payload;
+                const parts = [];
+                if (p.start_date) parts.push(`<span class="action-date">📅 ${p.start_date}</span>`);
+                if (p.end_date && p.end_date !== p.start_date) parts.push(`<span class="action-date">→ ${p.end_date}</span>`);
+                if (p.location) parts.push(`<span class="action-location">📍 ${p.location}</span>`);
+                if (parts.length) dateHtml = `<div class="action-dates">${parts.join(' ')}</div>`;
+            }
+
             el.innerHTML = `
                 <h4>${action.title || 'Action Request'}</h4>
-                <p>${action.description || 'Approval required for execution.'}</p>
+                ${dateHtml}
+                <p>${action.reason || action.description || 'Approval required for execution.'}</p>
                 <div class="action-actions">
                     <button class="approve-btn"><i class="ph ph-check"></i> Approve</button>
                     <button class="reject-btn"><i class="ph ph-x"></i> Reject</button>

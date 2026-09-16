@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from backend.schemas.context import ExtractedEntity, ExtractedEvent, ExtractedFact
 from backend.services.extraction_service import async_run_extraction_for_document
 from backend.db.store import get_space_documents
-from backend.config import DB_PATH
+import backend.config as _cfg
 
 router = APIRouter()
 
@@ -30,7 +30,7 @@ async def get_events(space_id: Optional[str] = None):
     """Retrieve extracted events. Optionally filter by space_id."""
     events = []
     
-    with sqlite3.connect(DB_PATH) as conn:
+    with sqlite3.connect(_cfg.DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         
         if space_id:
@@ -56,7 +56,7 @@ async def get_entities(space_id: Optional[str] = None, type: Optional[str] = Non
     """Retrieve extracted entities. Optionally filter by space_id and/or entity type."""
     entities = []
     
-    with sqlite3.connect(DB_PATH) as conn:
+    with sqlite3.connect(_cfg.DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         
         query_parts = []

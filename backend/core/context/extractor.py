@@ -11,7 +11,7 @@ Extract ONLY explicit, high-confidence information. DO NOT guess or infer things
 Return the result as a valid JSON object matching the exact schema requested. Do not include markdown formatting or extra text.
 
 Extraction Rules:
-1. EVENT TYPES: 'meeting', 'interview', 'deadline', 'exam', 'submission', 'appointment'
+1. EVENT TYPES: 'meeting', 'interview', 'deadline', 'exam', 'submission', 'appointment', 'travel', 'personal', 'general'
 2. ENTITY TYPES: 'person', 'organization', 'location', 'technology', 'project'
 3. EVIDENCE: Always include a short snippet (1-2 sentences) of the exact text where you found this information.
 4. CONFIDENCE: Give a confidence score between 0.0 and 1.0 (1.0 = explicitly stated).

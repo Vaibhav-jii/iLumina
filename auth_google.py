@@ -1,9 +1,9 @@
 import os
+os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-# The scopes required for Google Sheets, Drive, and Calendar
+# The scopes required for Google Drive and Calendar
 SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/calendar"
 ]
@@ -21,8 +21,8 @@ def authenticate_google():
         SCOPES
     )
     
-    # Capture the credentials after successful login
-    creds = flow.run_local_server(port=0)
+    # Capture the credentials after successful login (prompt consent ensures fresh refresh_token)
+    creds = flow.run_local_server(port=0, prompt='consent', access_type='offline')
     
     # Save the token for future use
     with open("token.json", "w") as token_file:

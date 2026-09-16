@@ -44,14 +44,16 @@ async def lifespan(app: FastAPI):
             # Playwright MCP Server via SSE
             try:
                 from fastmcp import Client as FastMCPClient
+                from fastmcp.client.transports.sse import SSETransport
                 from backend.config import FASTMCP_URL
-                # Set a very long timeout (24 hours) to prevent HTTPX ReadTimeout on idle SSE connections
-                playwright_client = FastMCPClient(FASTMCP_URL, timeout=86400.0)
+                # Set a 24-hour SSE read timeout so idle SSE connections are not dropped after 5 minutes
+                transport = SSETransport(url=FASTMCP_URL, sse_read_timeout=86400.0)
+                playwright_client = FastMCPClient(transport, timeout=86400.0)
                 await stack.enter_async_context(playwright_client)
                 MCP_SESSIONS["playwright"] = {"session": playwright_client}
                 print("✅ Playwright MCP Session Initialized")
             except Exception as e:
-                print(f"❌ Failed to initialize Playwright MCP: {e}")
+                print(f"❌ Failed to initialize Playwright MCP: {type(e).__name__}: {e}")
 
             # Filesystem MCP server
             fs_params = StdioServerParameters(

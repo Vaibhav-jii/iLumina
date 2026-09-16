@@ -123,11 +123,21 @@ async def async_run_extraction_for_document(document_id: str) -> Dict[str, int]:
         
         # Automatically propose a calendar action
         try:
+            # Build a human-readable date string for the pending task card
+            date_parts = []
+            if event.get("start_date"):
+                date_parts.append(f"📅 Start: {event['start_date']}")
+            if event.get("end_date"):
+                date_parts.append(f"📅 End: {event['end_date']}")
+            if event.get("location"):
+                date_parts.append(f"📍 Location: {event['location']}")
+            date_info = "\n".join(date_parts)
+
             action = ProposedActionCreate(
                 action_type="calendar.create",
                 provider="google_calendar",
                 title=f"Schedule: {event.get('title', 'Event')}",
-                description=f"Auto-extracted from {filename}:\n\n{event.get('description', '')}\n\nEvidence: {event.get('evidence', '')}",
+                description=f"Auto-extracted from {filename}:\n\n{event.get('description', '')}\n\n{date_info}\n\nEvidence: {event.get('evidence', '')}",
                 payload={
                     "title": event.get("title", "Extracted Event"),
                     "description": event.get("description", ""),

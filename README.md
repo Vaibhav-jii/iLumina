@@ -1,112 +1,189 @@
-# iLumina — Agentic AI Assistant with MCP Integration
+# iLumina — Multi-Agent Document Intelligence System
 
-iLumina is a highly capable, multi-agent AI assistant powered by **FastAPI** and **LangGraph**. It orchestrates multiple LLM providers (Groq, Google Gemini) and utilizes the **Model Context Protocol (MCP)** to seamlessly interact with local filesystems, web browsers, and cloud storage (Microsoft 365, Google Drive).
-
-![iLumina Demo (Placeholder)](./frontend/screenshots/demo.gif)
+FastAPI and LangGraph assistant with MCP tool integration, document sync, ChromaDB retrieval, and SSE chat streaming.
 
 ---
 
-## 🌟 Key Features & Achievements
+## Overview
 
-- **Multi-Agent Architecture (LangGraph):** Employs a dual-agent workflow with a Research Agent and an Expert Writer Agent. Operates on a 10-step sequential reasoning loop to break down complex user intents, retrieve data, and delegate final report generation.
-- **Comprehensive Model Context Protocol (MCP) Integration:** Exposes diverse capabilities through a unified protocol via HTTP proxies and Stdio servers:
-  - 🌐 **Web Automation:** Uses a headless Playwright server to navigate, scrape, type, click, and capture full-page DOM/accessibility and Base64 image snapshots. Also integrates DuckDuckGo search.
-  - 📁 **Filesystem Access:** Integrates `@modelcontextprotocol/server-filesystem` to safely read and list local workspace directories.
-  - 🧠 **Persistent Memory:** Utilizes `@modelcontextprotocol/server-memory` to maintain a memory graph of user facts and observations.
-- **Multi-Cloud Sync Engine:** A persistent asynchronous background worker (`sync_engine.py`) automatically crawls **Google Drive** and **Microsoft 365 / OneDrive** every 5 minutes. It extracts text from PDFs (`PyPDF2`) and Word Documents (`python-docx`).
-- **RAG & Vector Search:** The sync engine chunks cloud documents and embeds them into a persistent **ChromaDB** vector database, allowing the LLM to perform context-aware Retrieval-Augmented Generation across hundreds of enterprise files.
-- **Dynamic LLM Routing & Vision Support:** Intelligently routes inference to Groq or Gemini based on task requirements, with native tool calling support on both providers. Seamlessly handles Base64 image uploads by delegating to specialized Vision models (e.g., Llama-4 Scout Vision or Gemini Vision).
-- **High-Performance FastAPI Backend:** Built on FastAPI with atomic in-memory caching and a persistent SQLite database for lightning-fast chat history and session management.
-- **Expert PDF Generation:** Automatically compiles research and insights into formatted PDF reports using `fpdf2`, featuring custom typography, tables, and colors natively mapped from markdown without external CSS dependencies.
+iLumina is a multi-agent AI assistant built on **FastAPI** and **LangGraph**. It orchestrates multiple LLM providers (Groq, Google Gemini) and uses the **Model Context Protocol (MCP)** to interact with local filesystems, web browsers, and cloud storage (Microsoft 365, Google Drive).
+
+The backend follows a modular **route → service → database** architecture with SQLite for session history, in-memory caching for active chat state, and ChromaDB for vector-embedding storage enabling RAG-based semantic search.
 
 ---
 
-## 🏗️ System Architecture
+## Architecture
 
-```mermaid
-graph TD
-    User([User]) -->|HTTP / API| FastAPI[FastAPI Backend]
-    
-    subgraph Core Logic
-        FastAPI --> LG[LangGraph Orchestrator]
-        LG --> RA[Research Agent]
-        LG --> WA[Writer Agent]
-        WA --> PDF[PDF Generator (fpdf2)]
-    end
-    
-    subgraph LLM Router
-        RA --> Router{LLM Router}
-        Router --> Groq[Groq Llama-3 / Vision]
-        Router --> Gemini[Google Gemini]
-
-    end
-    
-    subgraph Model Context Protocol Servers
-        RA --> FastMCP[FastMCP Proxy]
-        FastMCP -->|MCP| PW[Playwright Server]
-        RA --> StdioMCP[Stdio MCP Clients]
-        StdioMCP -->|MCP| FS[Filesystem Server]
-        StdioMCP -->|MCP| MS[MS365 Server]
-        StdioMCP -->|MCP| Mem[Memory Server]
-    end
-    
-    subgraph Persistent Storage
-        SyncEngine[Cloud Sync Engine (GDrive/OneDrive)] -->|Ingests Docs| ChromaDB[(ChromaDB Vector Store)]
-        RA -->|Semantic Search| ChromaDB
-        FastAPI --> SQLite[(SQLite Chat History + RAM Cache)]
-    end
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Frontend (HTML/CSS/JS)                                          │
+│  SSE chat streaming · dynamic DOM rendering · session management │
+└──────────────────┬───────────────────────────────────────────────┘
+                   │ HTTP / SSE
+┌──────────────────▼───────────────────────────────────────────────┐
+│  FastAPI Backend                                                  │
+│                                                                   │
+│  ┌─────────┐  ┌────────────┐  ┌──────────────┐                  │
+│  │ Routes  │→ │  Services  │→ │  DB Layer    │                  │
+│  │ (9 modules)│ │ (sync,     │  │ (SQLite +   │                  │
+│  │         │  │  extract,  │  │  RAM cache)  │                  │
+│  │         │  │  calendar) │  │              │                  │
+│  └─────────┘  └────────────┘  └──────────────┘                  │
+│       │                                                           │
+│  ┌────▼─────────────────────────────────┐                        │
+│  │  LangGraph Orchestrator              │                        │
+│  │  Research Agent ←→ Writer Agent      │                        │
+│  │  10-step sequential reasoning loop   │                        │
+│  └────┬─────────────────────────────────┘                        │
+│       │                                                           │
+│  ┌────▼─────────────────────────────────┐                        │
+│  │  LLM Router                          │                        │
+│  │  Groq (Llama-3/Vision) ↔ Gemini     │                        │
+│  │  Dynamic routing by task complexity   │                        │
+│  └──────────────────────────────────────┘                        │
+└──────────────────────────────────────────────────────────────────┘
+         │                              │
+┌────────▼────────────┐    ┌────────────▼──────────────────────────┐
+│  MCP Servers         │    │  Persistent Storage                   │
+│                      │    │                                       │
+│  Playwright (web)    │    │  ChromaDB (vector embeddings / RAG)   │
+│  Filesystem (local)  │    │  SQLite  (chat history / sessions)    │
+│  Microsoft 365       │    │                                       │
+│  Memory (user facts) │    │  Cloud Sync Engine                    │
+│  Documents (custom)  │    │  Google Drive + OneDrive → ChromaDB   │
+│                      │    │  5-minute scheduled refresh cycle     │
+│  → 16+ tools exposed │    │                                       │
+│    via FastMCP proxy  │    │                                       │
+└──────────────────────┘    └───────────────────────────────────────┘
 ```
 
 ---
 
-## 🚀 Getting Started
+## Features
 
-### 1. Prerequisites
+- **Modular FastAPI Backend** — Separate route, service, and database layers with 9 API route modules covering chat, history, spaces, actions, calendar, and integrations.
+- **LangGraph Dual-Agent Workflow** — Research Agent and Writer Agent operate on a 10-step reasoning loop to decompose queries, retrieve data, and generate reports.
+- **Dynamic LLM Routing** — Switches between Groq and Gemini based on task complexity, with native tool-calling and multimodal vision support.
+- **MCP Tool Integration** — Playwright browser automation, filesystem access, Microsoft 365, and persistent memory exposed as 16+ tools behind a FastMCP proxy.
+- **RAG & Vector Search** — Scheduled cloud sync worker ingests documents from Google Drive and OneDrive, chunks and embeds them into ChromaDB for semantic retrieval.
+- **SSE Chat Streaming** — Server-Sent Events for real-time response streaming with persisted session history.
+- **88 Pytest Tests** — Unit and integration tests covering DB operations, API routes, MCP client helpers, and sync modules (80% line coverage).
+- **Docker Support** — Containerized with automated Playwright browser installation and multi-process startup.
+
+---
+
+## Tech Stack
+
+| Layer | Technologies |
+|:------|:-------------|
+| **Backend** | Python, FastAPI, LangGraph, Pydantic |
+| **Frontend** | HTML, CSS, JavaScript (vanilla) |
+| **AI / LLM** | Groq (Llama-3), Google Gemini, ChromaDB |
+| **Integrations** | Model Context Protocol (MCP), Playwright, Google Drive API, Microsoft Graph API |
+| **Storage** | SQLite (sessions/history), ChromaDB (vector embeddings) |
+| **Testing** | Pytest (88 tests, 80% coverage) |
+| **DevOps** | Docker, Git |
+
+---
+
+## Project Structure
+
+```
+iLumina/
+├── backend/
+│   ├── app.py                  # FastAPI application factory
+│   ├── config.py               # Environment and settings
+│   ├── models.py               # Pydantic models
+│   ├── routes/                 # 9 API route modules
+│   │   ├── chat.py             # Chat endpoints + SSE streaming
+│   │   ├── history.py          # Session history CRUD
+│   │   ├── spaces.py           # Workspace management
+│   │   ├── actions.py          # User action tracking
+│   │   ├── calendar.py         # Calendar integration
+│   │   ├── context.py          # Context extraction
+│   │   ├── integrations.py     # Cloud service integrations
+│   │   ├── memory.py           # Persistent memory endpoints
+│   │   └── system.py           # Health checks and system info
+│   ├── services/
+│   │   ├── sync_service.py     # Google Drive + OneDrive sync worker
+│   │   ├── extraction_service.py # Document text extraction
+│   │   └── calendar_service.py # Calendar event processing
+│   ├── core/
+│   │   ├── agent.py            # LangGraph agent orchestration
+│   │   └── llm.py              # LLM router (Groq / Gemini)
+│   ├── db/                     # SQLite store + context store
+│   ├── mcp/
+│   │   ├── client.py           # MCP tool discovery and execution
+│   │   └── document_server.py  # Custom document MCP server
+│   └── schemas/                # Request/response schemas
+├── frontend/
+│   ├── index.html              # Single-page application
+│   ├── css/                    # Stylesheets
+│   └── js/                     # Client-side logic (api.js, ui.js)
+├── tests/
+│   ├── conftest.py             # Pytest fixtures
+│   └── test_backend.py         # 88 test cases
+├── mcp_registry/               # MCP server configurations
+├── docs/
+│   └── API_CONTRACT.md         # API endpoint documentation
+├── Dockerfile                  # Container configuration
+├── requirements.txt            # Python dependencies
+├── start.sh                    # Multi-service startup script
+└── .env.example                # Environment variable template
+```
+
+---
+
+## Getting Started
+
+### Prerequisites
 - Python 3.11+
 - Node.js 20.x (required for MCP servers)
-- Playwright browsers installed
 
-### 2. Installation
-Clone the repository and install the Python dependencies:
+### Installation
 
 ```bash
+# Clone the repository
+git clone https://github.com/Vaibhav-jii/iLumina.git
+cd iLumina
+
 # Set up virtual environment
 python -m venv .venv
 source .venv/bin/activate
 
-# Install requirements
+# Install dependencies
 pip install -r requirements.txt
 
-# Install Playwright dependencies
+# Install Playwright browsers
 playwright install chromium
-```
 
-### 3. Environment Variables
-Copy the example environment file and fill in your API keys:
-
-```bash
+# Configure environment
 cp .env.example .env
+# Edit .env with your GROQ_API_KEY and GOOGLE_API_KEY
 ```
-Ensure you provide your `GROQ_API_KEY` and `GOOGLE_API_KEY` at a minimum. For cloud sync, you will also need a valid `token.json` for Google Drive and Microsoft 365 credentials.
 
-### 4. Running the Application
-iLumina consists of multiple background services (FastMCP proxy, sync engine, etc.) orchestrated via a single startup script:
+### Running
 
 ```bash
+# Start all services (FastAPI + MCP servers)
 ./start.sh
 ```
 
-Alternatively, you can run the application via Docker:
+Or with Docker:
+
 ```bash
 docker build -t ilumina .
 docker run -p 8000:8000 --env-file .env ilumina
 ```
 
+### Running Tests
+
+```bash
+pytest tests/ -v --cov=backend --cov-report=term-missing
+```
+
 ---
 
-## 🛠️ Tech Stack
-- **Backend:** Python, FastAPI, LangGraph
-- **Frontend:** Vanilla HTML/CSS/JS (Lightweight)
-- **AI / ML:** Groq, Google GenAI, ChromaDB
-- **Automation & Integrations:** Model Context Protocol (MCP), Playwright, Google Drive API, MS Graph API
-- **Utilities:** SQLite (caching/history), `fpdf2` (PDF styling), `PyPDF2` & `python-docx` (document parsing)
+## Author
+
+**Vaibhav Bansal** — [GitHub](https://github.com/Vaibhav-jii) · [LinkedIn](https://linkedin.com/in/vaibhav-bansal-512604331)
